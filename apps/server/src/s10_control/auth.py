@@ -115,6 +115,20 @@ class AuthService:
             return None
         return Principal(cookie, row["user_name"], row["role"], row["csrf_token"])
 
+    def is_session_active(self, session_id: str) -> bool:
+        """Cheap revalidation for a connection whose cookie was authenticated."""
+        return self.active_session_role(session_id) is not None
+
+    def active_session_role(self, session_id: str) -> str | None:
+        """Return the current role only while the persisted session is active."""
+        identifier = session_id.split(".", 1)[0]
+        row = self.connection.execute(
+            "SELECT role, expires_at, revoked_at FROM sessions WHERE id = ?", (identifier,)
+        ).fetchone()
+        if not row or row["revoked_at"] is not None or row["expires_at"] <= _now():
+            return None
+        return str(row["role"])
+
     def revoke(self, session_id: str) -> None:
         identifier = session_id.split(".", 1)[0]
         with self.connection:

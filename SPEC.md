@@ -95,8 +95,9 @@ opcional e nunca altera o caminho LAN.
 - **WEB-004:** exigir nova confirmação para ações sensíveis e mostrar resultado
   verificado ou `unverified`.
 - **WEB-005:** não chamar ADB, `ttyd`, túnel ou companion diretamente.
-- **WEB-006:** controle por coordenadas só é habilitado para um frame conhecido,
-  com largura, altura, display e rotação correspondentes.
+- **WEB-006:** controle por coordenadas só é habilitado para um frame confirmado
+  pela mesma sessão/stream, com largura, altura, display, rotação, target e
+  geração ADB correspondentes.
 
 ### 6.3 ADB
 
@@ -118,8 +119,9 @@ opcional e nunca altera o caminho LAN.
   a validar.
 - **SCREEN-003:** tratar scrcpy-server/H.264 para navegador como experimental e
   manter fallback para snapshot.
-- **SCREEN-004:** publicar codec/MIME, dimensões, rotação, display, frame ID e
-  timestamp.
+- **SCREEN-004:** publicar codec/MIME, dimensões, rotação, display, frame ID,
+  timestamp e geração/target do provider; medir rotação antes/depois da captura
+  e descartar divergência.
 - **SCREEN-005:** reconhecer que janelas seguras podem aparecer pretas e não
   tentar contornar a proteção.
 - **SCREEN-006:** encerrar somente stream/subprocesso criado pelo projeto quando
@@ -132,7 +134,8 @@ opcional e nunca altera o caminho LAN.
 - **CTRL-002:** começar com adapter ADB `input`/`am`; adapter scrcpy ou companion
   é opcional.
 - **CTRL-003:** transformar coordenadas usando os metadados do frame e rejeitar
-  frame velho, rotação divergente ou tela desconhecida.
+  frame velho, de outra sessão, rotação/geração/target divergentes ou tela
+  desconhecida, com revalidação dentro do gate imediatamente antes do input.
 - **CTRL-004:** não prometer Unicode completo nem interação com diálogo seguro.
 - **CTRL-005:** não oferecer bypass de bloqueio, confirmação de segurança, power
   menu destrutivo ou reboot.

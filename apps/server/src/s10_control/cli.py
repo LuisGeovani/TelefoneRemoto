@@ -65,7 +65,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "serve":
             configure_logging()
             settings = load_settings()
-            uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
+            uvicorn.run(
+                create_app(settings),
+                host=settings.host,
+                port=settings.port,
+                loop="asyncio",
+                http="h11",
+                ws="wsproto",
+                log_config=None,
+            )
             return 0
     except ConfigurationError as error:
         print(f"configuration error: {error}", file=sys.stderr)

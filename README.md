@@ -3,9 +3,10 @@
 Servidor de controle **local-first** para um Samsung Galaxy S10+ SM-G975F,
 executado no Termux, sem root e com o display físico inoperante.
 
-O projeto está no **Milestone 1 (painel local em implementação)**. O backend é
-Python/FastAPI com SQLite e a interface é React/TypeScript/Vite, compilada para
-assets locais e entregue pelo próprio backend. A base de trabalho é:
+O projeto está no **Milestone 2**, implementado no host e ainda pendente de
+validação no S10 real. O backend é Python/FastAPI com SQLite e a interface é
+React/TypeScript/Vite, compilada para assets locais e entregue pelo próprio
+backend. A base de trabalho é:
 
 - [SPEC.md](SPEC.md): escopo consolidado e matriz de viabilidade;
 - [ARCHITECTURE.md](ARCHITECTURE.md): arquitetura, módulos e contratos;
@@ -19,8 +20,16 @@ A LAN é o caminho principal. Internet e túnel remoto são opcionais. A ausênc
 de ADB, Internet, túnel, Termux:API ou qualquer provider opcional deve reduzir
 somente as capacidades correspondentes, sem derrubar o núcleo local.
 
-## Execução planejada no Termux
+## Estado funcional
 
-Após a validação no aparelho real, o painel escutará em `0.0.0.0:8080` e será
-acessado pela LAN. Internet não é necessária depois da instalação; ADB é apenas
-reportado como indisponível nesta etapa e nunca é chamado pelo servidor.
+O painel escuta em `0.0.0.0:8080`, mantém Dashboard/health/LAN sem Internet ou
+ADB e oferece uma página de tela remota por screenshots PNG de baixo FPS. O ADB
+é opcional: captura e controle só ficam disponíveis depois de modelo
+`SM-G975F` e fingerprint local serem validados. Controles são tipados,
+allowlisted e vinculados à mesma sessão/stream, frame, rotação, target e geração
+ADB confirmados; não existe shell remoto.
+
+H.264/scrcpy, PowerShare, terminal web, acesso remoto, package manager e file
+manager não pertencem a esta etapa. Antes de usar ADB no aparelho, siga o
+[runbook seguro](docs/operations/adb-screen-control-safe.md). O teste real no
+S10 deve preservar SSH, Wi-Fi e as autorizações ADB existentes.

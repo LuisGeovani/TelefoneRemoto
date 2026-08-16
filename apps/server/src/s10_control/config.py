@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,15 @@ DEFAULT_CONFIG = {
     "session_ttl_hours": 24,
     "internet_probe": {"host": "1.1.1.1", "port": 53, "timeout_seconds": 1.0},
     "ssh_probe_port": 8022,
+    "adb": {
+        "enabled": False,
+        "target_serial": None,
+        "expected_fingerprint": None,
+        "status_cache_seconds": 3.0,
+        "command_timeout_seconds": 4.0,
+        "screenshot_timeout_seconds": 8.0,
+    },
+    "screen": {"fps": 1.0, "frame_max_age_seconds": 5.0, "max_clients": 2},
 }
 
 
@@ -23,6 +33,24 @@ class ProbeConfig:
     host: str
     port: int
     timeout_seconds: float
+
+
+@dataclass(frozen=True)
+class AdbConfig:
+    enabled: bool
+    target_serial: str | None
+    expected_fingerprint: str | None
+    expected_model: str
+    status_cache_seconds: float
+    command_timeout_seconds: float
+    screenshot_timeout_seconds: float
+
+
+@dataclass(frozen=True)
+class ScreenConfig:
+    fps: float
+    frame_max_age_seconds: float
+    max_clients: int
 
 
 @dataclass(frozen=True)
@@ -36,6 +64,8 @@ class Settings:
     session_ttl_hours: int
     internet_probe: ProbeConfig
     ssh_probe_port: int
+    adb: AdbConfig
+    screen: ScreenConfig
 
 
 class ConfigurationError(ValueError):
@@ -97,6 +127,20 @@ def _positive_int(value: object, label: str, maximum: int = 65535) -> int:
     return value
 
 
+def _bounded_float(value: object, label: str, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= float(value) <= maximum:
+        raise ConfigurationError(f"{label} must be between {minimum} and {maximum}")
+    return float(value)
+
+
+def _optional_safe_text(value: object, label: str, pattern: str, maximum: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or len(value) > maximum or not re.fullmatch(pattern, value):
+        raise ConfigurationError(f"{label} has an invalid format")
+    return value
+
+
 def load_settings(data_dir: Path | None = None) -> Settings:
     root = (data_dir or _default_data_dir()).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -106,6 +150,8 @@ def load_settings(data_dir: Path | None = None) -> Settings:
     raw = _read_config(config_path)
     listen = _expect_mapping(raw.get("listen"), "listen")
     probe = _expect_mapping(raw.get("internet_probe"), "internet_probe")
+    adb = _expect_mapping(raw.get("adb", DEFAULT_CONFIG["adb"]), "adb")
+    screen = _expect_mapping(raw.get("screen", DEFAULT_CONFIG["screen"]), "screen")
     host = listen.get("host")
     if not isinstance(host, str) or not host:
         raise ConfigurationError("listen.host must be a non-empty string")
@@ -115,6 +161,9 @@ def load_settings(data_dir: Path | None = None) -> Settings:
     timeout = probe.get("timeout_seconds")
     if not isinstance(timeout, (int, float)) or not 0.1 <= float(timeout) <= 10:
         raise ConfigurationError("internet_probe.timeout_seconds must be between 0.1 and 10")
+    adb_enabled = adb.get("enabled")
+    if not isinstance(adb_enabled, bool):
+        raise ConfigurationError("adb.enabled must be a boolean")
     return Settings(
         data_dir=root,
         config_path=config_path,
@@ -125,4 +174,18 @@ def load_settings(data_dir: Path | None = None) -> Settings:
         session_ttl_hours=_positive_int(raw.get("session_ttl_hours"), "session_ttl_hours", 24 * 31),
         internet_probe=ProbeConfig(probe_host, _positive_int(probe.get("port"), "internet_probe.port"), float(timeout)),
         ssh_probe_port=_positive_int(raw.get("ssh_probe_port"), "ssh_probe_port"),
+        adb=AdbConfig(
+            enabled=adb_enabled,
+            target_serial=_optional_safe_text(adb.get("target_serial"), "adb.target_serial", r"[A-Za-z0-9._:\[\]%-]+", 200),
+            expected_fingerprint=_optional_safe_text(adb.get("expected_fingerprint"), "adb.expected_fingerprint", r"[!-~]+", 512),
+            expected_model="SM-G975F",
+            status_cache_seconds=_bounded_float(adb.get("status_cache_seconds", 3.0), "adb.status_cache_seconds", 0.5, 30.0),
+            command_timeout_seconds=_bounded_float(adb.get("command_timeout_seconds", 4.0), "adb.command_timeout_seconds", 0.5, 15.0),
+            screenshot_timeout_seconds=_bounded_float(adb.get("screenshot_timeout_seconds", 8.0), "adb.screenshot_timeout_seconds", 1.0, 30.0),
+        ),
+        screen=ScreenConfig(
+            fps=_bounded_float(screen.get("fps", 1.0), "screen.fps", 0.2, 2.0),
+            frame_max_age_seconds=_bounded_float(screen.get("frame_max_age_seconds", 5.0), "screen.frame_max_age_seconds", 1.0, 15.0),
+            max_clients=_positive_int(screen.get("max_clients", 2), "screen.max_clients", 8),
+        ),
     )

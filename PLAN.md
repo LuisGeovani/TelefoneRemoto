@@ -19,8 +19,8 @@ Tags sugeridas são criadas somente depois do aceite, nunca antecipadamente.
 
 ## Milestone 0 — fundação documental (esta tarefa)
 
-**Estado:** fundação documental concluída localmente; aceite e inventário real
-pendentes; M1 não iniciado.
+**Estado:** fundação documental concluída e publicada; inventário real ainda é
+gate para validar capacidades no aparelho.
 
 ### Entregáveis
 
@@ -67,6 +67,8 @@ runtime; o inventário é gate obrigatório antes de validar M1 no aparelho.
 
 ## Milestone 1 — painel local funcional
 
+**Estado:** implementado e testado no host; validação no SM-G975F pendente.
+
 ### Escopo exato
 
 Implementar somente o escopo autorizado pelo proprietário no ADR 0002:
@@ -98,9 +100,10 @@ de outro equipamento.
 
 1. instalar dependências de build manualmente, com lista revisada pelo
    proprietário;
-2. executar `go env`, `node --version`, `uname -m` e `s10control doctor`;
-3. buildar frontend/backend no Termux ARM64 e verificar que não há dependência
-   glibc;
+2. executar `python --version`, `node --version`, `uname -m` e
+   `s10-control version`;
+3. instalar o lock Python na venv e buildar o frontend no Termux ARM64,
+   verificando que não entrou wheel glibc/extensão nativa incompatível;
 4. iniciar manualmente e acessar health/UI por um segundo equipamento na LAN;
 5. testar exchange one-time/expiração, token inválido, papéis, emissão,
    rotação/revogação, logout, `auth reset`, CSRF/origin e rate limit;
@@ -119,85 +122,126 @@ Sem reboot. O teste de Termux:Boot não pertence ao M1.
 
 **Versão sugerida:** `v0.1.0`.
 
-## Milestone 2 — métricas locais e inspeção de rede
+## Milestone 2 — ADB, tela PNG e controle Android (etapa autorizada)
+
+**Estado:** implementado e testado no host; validação no SM-G975F pendente.
+
+O M2 combina o gateway ADB, o ScreenProvider PNG e o AndroidController porque
+controle por coordenadas não pode existir sem referência visual atual. O
+runbook obrigatório é
+[`docs/operations/adb-screen-control-safe.md`](docs/operations/adb-screen-control-safe.md).
 
 ### Entregáveis
 
-- coletores Go/processo/volumes acessíveis;
-- NetworkInspector read-only;
-- SSE, ring buffer limitado, qualidade/staleness e retenção opcional;
-- adapter Termux:API opcional com timeout e capability clara;
-- UI de métricas/rede sem qualquer controle de rádio.
+1. `AdbController` opcional com estados explícitos, discovery opt-in que pode
+   iniciar o servidor ADB local/mDNS, target configurado e monitor com backoff
+   limitado;
+2. validação exata de modelo `SM-G975F` e fingerprint cadastrada manualmente
+   antes de captura/controle;
+3. subprocessos sem shell, com argumentos separados, deadline e limites de
+   stdout/stderr;
+4. `ScreenProvider` por `adb -s TARGET exec-out screencap -p`, validação de PNG,
+   dimensões, rotação anterior/posterior, display, timestamp, target/geração e
+   stream/frame IDs;
+5. WebSocket autenticado/same-origin de frames PNG em 0,2–2 fps, um produtor,
+   fila latest-only, stream individual, ACK exato, revalidação de sessão e parada
+   quando não houver clientes;
+6. registry por sessão contendo somente o frame mais recente confirmado;
+7. tap, swipe, long press, keyevent allowlisted e texto ASCII restrito, todos
+   vinculados a sessão/frame/display/rotação/target/geração ainda atuais;
+8. coordenadas normalizadas, rate limit, confirmação para `sleep`, erros
+   estáveis e resultado `unverified` sem pós-condição observável;
+9. UI mobile-first para status ADB, frame PNG e controles habilitados apenas
+   quando a referência estiver válida;
+10. testes unitários/integrados com fake ADB para parser, identidade, timeout,
+    limite de saída, PNG, backpressure, ACK, frame stale e allowlists.
+
+### Fora do M2
+
+- H.264, scrcpy-server/cliente, `screenrecord`, ffmpeg, áudio, WebCodecs,
+  MediaProjection e companion;
+- pareamento/autorização/conexão ADB automáticos ou por endpoint;
+- `adb kill-server`, `reboot`, `root`, `unroot`, `tcpip`, revogação, limpeza de
+  chaves, controle de `adbd`, Wi-Fi ou SSH;
+- shell ADB genérico, package/intent arbitrário ou keycode numérico enviado pelo
+  cliente;
+- bypass de keyguard, DRM, `FLAG_SECURE` ou diálogo protegido;
+- promoção para `guaranteed` antes de evidência repetível registrada no S10.
+
+### Testes no host
+
+1. fake `adb devices -l` com nenhum, um, múltiplos, offline e unauthorized;
+2. target explícito, modelo falso e fingerprint falsa falham fechados;
+3. argv capturado prova `-s` e ausência de shell/metacaracteres;
+4. timeout e saída excessiva encerram somente o subprocesso do teste;
+5. PNG inválido, truncado, enorme e dimensões inválidas são recusados;
+6. fila por cliente nunca excede um frame; ACK antigo ou de outra sessão não
+   reautoriza frame;
+7. todos os controles recusam frame ausente/stale, rotação durante captura,
+   sessão ou geração/target divergentes, inclusive após espera pelo gate ADB;
+8. coordenadas, duração, key allowlist e regex de texto exercitam limites;
+9. strings proibidas não aparecem como operações alcançáveis;
+10. falha total de ADB mantém health, auth, métricas, UI e LAN nos testes.
 
 ### Testes no S10 real
 
-1. comparar processo/RSS/disco com comandos Termux read-only;
-2. confirmar IP LAN mostrado e acesso por IP manual;
-3. comparar bateria Termux:API quando app/CLI compatíveis existirem;
-4. remover somente o adapter da configuração e confirmar fallback/stale;
-5. apontar Termux:API para timeout de teste e verificar circuit breaker;
-6. cortar WAN externamente e confirmar métricas locais/SSE;
-7. manter 6 horas com tela apagada e registrar gaps/morte de processo, sem
-   `force-stop` e sem reboot;
-8. comprovar que não existe endpoint para Wi-Fi, rota, firewall ou hotspot.
+Pré-condições: proprietário presente, SSH confirmado de outro equipamento,
+rota DeX/HDMI funcional e ADB já autorizado/pareado manualmente. O backend não
+faz a primeira autorização.
 
-**Versão sugerida:** `v0.2.0`.
+1. executar o inventário opt-in, reconhecendo que `adb devices -l` pode iniciar
+   servidor/mDNS local, e registrar firmware/Termux sem segredos;
+2. definir manualmente target e fingerprint conforme o runbook; confirmar modelo
+   exato e recusa de fingerprint divergente sem auto-enrollment;
+3. capturar uma tela comum, validar assinatura PNG, dimensões, rotação,
+   timestamp e checksum; repetir com painel físico apagado;
+4. medir sequência PNG em 0,2, 1 e 2 fps; confirmar latest-only, ACK,
+   desconexão do último cliente e memória limitada;
+5. em app de laboratório, testar tap, swipe, long press, HOME/BACK e texto ASCII
+   no frame atual; não usar lockscreen, banco ou Settings críticos;
+6. expirar o frame e mudar rotação entre frame/ação; exigir recusa sem input;
+7. registrar Unicode/IME, `dumpsys input`, self-ADB e tela apagada como
+   experimentais quando divergirem;
+8. usar target inexistente para provar degradação, sem revogar ADB, parar Wi-Fi
+   ou afetar SSH/LAN;
+9. confirmar por inspeção/teste negativo a ausência de `kill-server`, `reboot`,
+   `tcpip`, pair/connect automáticos, shell/package/intent arbitrários e H.264;
+10. manter 30 minutos em 1 fps, registrando CPU, RSS, bateria, temperatura,
+    latência e gaps sem declarar SLA;
+11. restaurar somente config/serviço do projeto e reconfirmar SSH.
 
-## Milestone 3 — ADB gateway e snapshot read-only
+**Versão sugerida:** `v0.2.0-experimental` até o runbook passar no SM-G975F.
 
-### Entregáveis
+## Milestone 3 — observabilidade local avançada (planejado, não autorizado)
 
-- discovery observacional, alvo explícito, estados ADB e circuit breaker;
-- validação de modelo/fingerprint;
-- comandos read-only tipados necessários a identidade/probes;
-- `adb-screencap` PNG e metadados de frame;
-- métricas `dumpsys` opcionais com fixtures por firmware;
-- UI de diagnóstico ADB/snapshot.
+O escopo ADB/snapshot originalmente previsto para M3 foi absorvido pelo M2 por
+autorização explícita no ADR 0003. Este milestone passa a concentrar somente o
+que excede as métricas básicas já entregues no M1.
 
-### Testes no S10 real
+### Entregáveis futuros
 
-Pré-condição: ADB já autorizado/pareado por rota manual segura. O projeto não
-cria a primeira autorização.
+- coletores independentes com qualidade/staleness e retenção limitada;
+- SSE/ring buffer para métricas;
+- NetworkInspector estritamente read-only;
+- adapter Termux:API opcional com timeout/circuit breaker;
+- métricas ADB `dumpsys` somente após fixtures do firmware real.
 
-1. registrar `adb version`, endpoint/serial sem segredo, `adb devices -l` e
-   identidade do shell;
-2. provar recusa de um serial/fingerprint falso com fake adapter;
-3. capturar tela comum em PNG, validar assinatura, dimensões, rotação e checksum;
-4. repetir com painel físico apagado, sem app sensível;
-5. configurar endpoint inexistente e confirmar que LAN/core continuam;
-6. testar estados offline/unauthorized com fixtures/fakes, **sem revogar ADB**;
-7. medir frequência segura de snapshot, CPU, bateria e temperatura por 30 min;
-8. confirmar ausência de pair/tcpip/revoke/reboot na API e no binário.
+### Testes futuros no S10
 
-Se self-ADB não funcionar, registrar `experimental/unavailable`. ADB em um
-computador autorizado serve somente para recuperação e comparação de testes;
-não é provider do backend. Qualquer bridge remota futura exige ADR próprio.
+1. comparar CPU/RSS/disco com comandos Termux read-only;
+2. confirmar IP LAN mostrado e acesso manual sem WAN;
+3. validar Termux:API quando APK/CLI compatíveis existirem;
+4. simular timeout/provider ausente sem alterar Wi-Fi;
+5. soak de 6 horas com retenção limitada e registro de gaps;
+6. comprovar ausência de endpoint para rádio, rota, firewall ou hotspot.
 
-**Versão sugerida:** `v0.3.0`.
+## Milestone 4 — estabilização ADB/controle (planejado, não autorizado)
 
-## Milestone 4 — controle Android básico
-
-### Entregáveis
-
-- AndroidController ADB com key/tap/swipe/text/intents allowlisted;
-- transformação frame/rotação/display e rejeição de frame stale;
-- confirmações, operações auditadas e pós-condição quando observável;
-- UI de controle, desabilitada sem snapshot atual.
-
-### Testes no S10 real
-
-1. usar página/app de teste inofensiva, nunca lockscreen, banco ou Settings
-   críticos;
-2. testar HOME, BACK, tap central, bordas e swipe em portrait/landscape;
-3. girar entre captura e tap e provar rejeição por `STALE_FRAME`;
-4. testar ASCII, espaço e acentos; registrar Unicode como experimental quando
-   divergir;
-5. testar timeout com fake adapter e uma ação real inofensiva;
-6. comprovar via testes negativos bloqueio de power/reboot/reset/Wi-Fi/SSH e
-   intents arbitrários;
-7. medir latência sem prometer SLA antes da evidência.
-
-**Versão sugerida:** `v0.4.0`.
+O controle básico foi absorvido pelo M2. M4 só será aberto após os resultados do
+runbook real e um novo aceite. Possíveis itens são pós-condições por comparação
+de frame, fixtures de rotação do firmware e revisão da allowlist. Unicode,
+intents e novos keycodes não entram automaticamente: cada ampliação exige
+evidência, teste negativo e decisão explícita.
 
 ## Milestone 5 — arquivos e serviços confinados
 
@@ -244,8 +288,9 @@ não é provider do backend. Qualquer bridge remota futura exige ADR próprio.
 4. derrubar somente o `ttyd` criado e confirmar core/SSH intactos;
 5. desconectar navegador e verificar limpeza do subprocesso;
 6. medir processos/RSS por 30 min com console fechado e aberto;
-7. tentar `adb reboot`, `sv down sshd`, shell metacharacters e comando
-   desconhecido; todos devem ser recusados sem criar processo;
+7. enviar `adb reboot`, `sv down sshd`, metacaracteres e comando desconhecido
+   somente como payloads proibidos contra um provider falso; todos devem ser
+   recusados antes de criar processo, nunca executados no aparelho;
 8. confirmar que conteúdo do console não aparece no audit por padrão.
 
 **Versão sugerida:** `v0.6.0`.
@@ -370,8 +415,9 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 
 - M0: commits `docs: define S10 Control Server architecture` e
   `chore: scaffold project foundation`;
-- próximo trabalho: branch `codex/m1-foundation` criada a partir de `main` após
-  publicação/aceite desta base;
+- M1: commit funcional preservado em `codex/m1-local-dashboard`;
+- M2: trabalho isolado em `codex/m2-adb-screen-control`, sem misturar H.264 ou
+  milestones futuros;
 - Conventional Commits e mudanças de estado no mesmo commit relevante;
 - lockfiles obrigatórios a partir de M1;
 - ADRs numerados e imutáveis por decisão relevante;
@@ -380,10 +426,9 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 
 ## Instrução exata ao próximo agente
 
-Leia os cinco documentos raiz e implemente **somente o Milestone 1** listado
-acima. Comece por testes dos tipos comuns e das proibições, depois core/CLI,
-fluxo auth completo (inclusive reset local), listeners, NullProviders, UI mínima
-e template runit. Não execute probe ADB,
-não instale pacote no S10 sem revisão, não crie feature de módulo e não avance ao
-Milestone 2. Entregue testes de host e roteiro; a validação real só ocorre com o
-proprietário presente.
+Leia os documentos raiz, o ADR 0003 e o runbook ADB. **Não implemente outro
+milestone.** Valide o M2 no SM-G975F com o proprietário presente, SSH confirmado
+e rota visual segura. Faça somente correções de compatibilidade encontradas pelo
+runbook, repita os testes e registre evidência sanitizada em `STATUS.md`. Não
+adicione H.264, scrcpy, `screenrecord`, pairing/connect automático,
+shell/intent/package arbitrário ou feature futura sem nova autorização.

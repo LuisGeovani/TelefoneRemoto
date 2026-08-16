@@ -1,14 +1,15 @@
 # Arquitetura do S10 Control Server
 
-- **Status:** M1 autorizado; runtime substituído pelo ADR 0002
+- **Status:** M2 autorizado; runtime pelo ADR 0002 e slice ADB/PNG/controle pelo
+  ADR 0003
 - **Estilo:** monólito modular, hexagonal/ports-and-adapters, local-first
 
 ## 1. Decisão principal
 
 O sistema terá um único backend principal Python/FastAPI executado no Termux.
-Ele serve uma SPA React/TypeScript compilada localmente e coordena providers locais. ADB, captura,
-controle Android, Termux:API, `ttyd`, runit e túnel são dependências opcionais,
-nunca partes do núcleo.
+Ele serve uma SPA React/TypeScript compilada localmente e coordena providers
+locais. ADB, captura, controle Android, Termux:API, `ttyd`, runit e túnel são
+dependências opcionais, nunca partes do núcleo.
 
 Essa topologia minimiza processos-filho, memória, coordenação e superfície de
 falha no Android 12. Microserviços, containers, systemd e banco nativo foram
@@ -16,19 +17,22 @@ descartados.
 
 ```mermaid
 flowchart LR
-    lan["Navegador na LAN"] -->|"HTTP :8080 (M1)"| core["s10-control (FastAPI)"]
+    lan["Navegador na LAN"] -->|"HTTP :8080 (M1/M2)"| core["s10-control (FastAPI)"]
     remote["Cliente remoto opcional"] --> tunnel["Túnel outbound opcional"]
-    tunnel -->|"futuro; desligado no M1"| core
+    tunnel -->|"futuro; desligado no M1/M2"| core
 
     core --> ui["SPA local embutida"]
-    core --> adb["ADB Gateway"]
+    core --> screen["ScreenProvider: PNG em baixa frequência"]
+    core --> control["AndroidController tipado"]
+    screen --> adb["ADB Gateway"]
+    control --> adb
     core --> local["Termux / POSIX"]
     core --> api["Termux:API opcional"]
     core --> runit["runit / termux-services"]
     core --> ttyd["ttyd efêmero em loopback"]
     core --> companion["APK companion opcional"]
 
-    adb --> android["Android shell / Surface / input"]
+    adb --> android["Android shell: getprop / screencap / input allowlisted"]
     companion --> android
 ```
 
@@ -72,8 +76,9 @@ Ele roda como o UID comum do Termux, sem capabilities Linux adicionais.
   loopback; nunca inicia um shell irrestrito;
 - `s10-tunnel`: reverse SSH ou cloudflared, opcional e supervisionado;
 - `adb`: server/client do pacote `android-tools`, somente quando o provider ADB
-  estiver configurado;
-- `ffmpeg`: experimento futuro e sob demanda, não baseline de streaming.
+  estiver configurado; o projeto não gerencia `adbd`, pareamento, conexão ou o
+  lifecycle global do adb server;
+- `ffmpeg`: experimento futuro e sob demanda; não pertence ao M2.
 
 Cada sidecar tem timeout, limite de restart e health próprio. A queda de um não
 reinicia o telefone nem o processo principal.
@@ -210,92 +215,149 @@ Responsabilidades:
 - estados vazios/degradados com ação de diagnóstico segura;
 - acompanhamento de operações e eventos;
 - confirmação de ações sensíveis;
-- viewport de tela sincronizada a `frameId`, display e rotação.
+- viewport de tela sincronizada a `frameId`, display, rotação, target e geração
+  ADB.
 
-Sem service worker no início, para evitar controles antigos em cache. Assets e
-fontes são locais. A UI nunca habilita botão com base apenas no suporte estático.
+O service worker básico usa network-first para navegação e remove caches antigos,
+evitando controles obsoletos após update. Assets e fontes são locais. A UI nunca
+habilita botão com base apenas no suporte estático.
 
 ### 7.3 ADB Gateway
 
-```go
-type ADBClient interface {
-    Provider
-    Identity(context.Context) (DeviceIdentity, error)
-    Shell(context.Context, ADBCommand) (CommandResult, error)
-    ExecOut(context.Context, ADBCommand) (io.ReadCloser, error)
-    PushManagedAsset(context.Context, ManagedAsset, io.Reader) error
-    PullManagedArtifact(context.Context, ManagedArtifact) (io.ReadCloser, error)
-}
+Contrato do runtime Python:
+
+```python
+class AdbController(Protocol):
+    @property
+    def current_status(self) -> AdbStatus: ...
+
+    async def status(self, force: bool = False) -> AdbStatus: ...
+    async def capture_screen(self) -> AdbScreenCapture: ...
+    async def display_rotation(self) -> int | None: ...
+    async def execute(self, command: AndroidInputCommand, *, expected_target: str,
+                      expected_generation: int, expected_rotation: int,
+                      precondition: Callable[[], None]) -> None: ...
 ```
 
-`ADBCommand` é uma união de comandos permitidos, não uma string. Assets e
-artefatos usam IDs tipados e caminhos remotos fixos sob a área temporária do
-projeto; cliente/API nunca fornece `RemotePath`. O adapter passa argumentos
-diretamente ao processo, define serial com `-s` e nunca usa alvo implícito. A
-primeira operação após conexão compara modelo, serial lógico e fingerprint com
-a identidade cadastrada.
+`AndroidInputCommand` é uma união fechada de dataclasses, nunca uma string. O
+adapter usa `asyncio.create_subprocess_exec`, passa cada argumento separadamente,
+define deadline e limita stdout/stderr. Captura PNG possui limite próprio; uma
+resposta excessiva encerra somente o processo criado pela operação.
 
-O gateway não oferece pair/tcpip/revoke/reboot. Discovery apenas observa; porta
-dinâmica descoberta não é persistida como verdade eterna. Retry tem backoff e
-circuit breaker.
+Comandos exatos do M2:
+
+| Uso | Vetor permitido |
+|---|---|
+| observar transports | `adb devices -l` |
+| observar serviço pareado | `adb mdns services` |
+| modelo | `adb -s TARGET shell getprop ro.product.model` |
+| fingerprint | `adb -s TARGET shell getprop ro.build.fingerprint` |
+| PNG | `adb -s TARGET exec-out screencap -p` |
+| rotação experimental | `adb -s TARGET shell dumpsys input` |
+| tap | `adb -s TARGET shell input tap X Y` |
+| swipe/long press | `adb -s TARGET shell input swipe X1 Y1 X2 Y2 MS` |
+| tecla | `adb -s TARGET shell input keyevent KEYCODE` |
+| texto restrito | `adb -s TARGET shell input text ASCII` |
+
+As consultas de discovery não escrevem propriedades Android, mas o cliente pode
+iniciar o servidor ADB local e o mDNS pode reconectar peers já pareados. Por isso
+o provider é opt-in e discovery não é classificado como sem efeito de lifecycle.
+Ele nunca autoriza seleção ambígua. `target_serial` é a preferência; se uma porta
+dinâmica desaparecer, o gateway só pode adotar um único device já conectado e o
+submete às mesmas verificações. Toda operação usa esse target resolvido
+explicitamente com `-s`. Antes de captura/controle, o
+gateway exige modelo `SM-G975F` e fingerprint igual à cadastrada manualmente. O
+resultado descoberto não é persistido e a validação usa cache curto. Cada
+identidade verificada recebe uma geração monotônica, invalidada em mudança de
+target/estado. O provider
+fica desabilitado por padrão e só inicia probes após opt-in local.
+
+Pareamento, autorização Android e `adb connect` são manuais conforme o runbook.
+O backend não expõe nem chama `pair`, `connect`, `disconnect`, `kill-server`,
+`reboot`, `root`, `unroot`, `tcpip`, revogação, limpeza de chaves, `settings put`,
+`svc wifi`, package/intent arbitrário ou gerência de `adbd`. Porta dinâmica
+descoberta não é persistida como verdade eterna. O monitor usa backoff limitado;
+sua falha não altera health/auth/LAN.
 
 ### 7.4 Screen Provider
 
-```go
-type ScreenProvider interface {
-    Provider
-    Snapshot(context.Context, SnapshotRequest) (Frame, error)
-    OpenStream(context.Context, StreamRequest) (ScreenStream, error)
-}
+```python
+class ScreenProvider(Protocol):
+    async def capture(self, stream_id: str) -> Frame: ...
 
-type FrameMeta struct {
-    FrameID   string
-    Width     int
-    Height    int
-    Rotation  int
-    DisplayID int
-    MIME      string
-    ObservedAt time.Time
-}
+@dataclass(frozen=True)
+class FrameMetadata:
+    stream_id: str
+    frame_id: str
+    width: int
+    height: int
+    rotation: int | None
+    display_id: int
+    mime: str
+    observed_at: str
+    adb_target: str
+    adb_generation: int
 ```
 
-Providers planejados, na ordem de entrega:
+O provider autorizado no M2 é somente `adb-screencap`. Ele valida assinatura
+PNG, chunk IHDR, dimensões entre 1 e 16384, tamanho máximo e MIME `image/png`.
+Rotação vem de um parser versionado de `dumpsys input`; resultado ausente deixa
+controle indisponível em vez de assumir orientação.
 
-1. `unavailable`: implementação nula e sempre segura;
-2. `adb-screencap`: PNG on-demand por `exec-out`, sem fingir vídeo;
-3. `scrcpy-h264`: scrcpy-server fixado por versão/checksum, socket ADB e H.264
-   retransmitido ao navegador; experimental;
-4. `companion-media-projection`: alternativa futura com consentimento.
+`ScreenStreamHub` compartilha um único produtor de 0,2 a 2 frames PNG por
+segundo entre clientes autenticados. O padrão permite dois viewers simultâneos
+(limite configurável de 1 a 8). Cada assinante tem fila de tamanho 1: sob
+backpressure, o frame anterior é descartado. Metadados e bytes são enviados
+separadamente pelo WebSocket. Cada assinante recebe `stream_id` individual e
+confirma exatamente `stream_id` e `frame_id`; o servidor responde
+`frame_acknowledged` somente após o commit. O `FrameRegistry` guarda apenas o
+frame confirmado daquela sessão/stream, com epoch de invalidação; outro usuário
+ou ACK tardio não pode reutilizá-lo.
+Sem clientes, o produtor para e o registro correspondente é limpo. Captura,
+rotação anterior/posterior, target, `transport_id` e geração são observados sob
+o mesmo scheduler limitado, que prioriza controles sem permitir starvation;
+mudança durante o PNG descarta o frame.
 
-O cliente gráfico SDL do scrcpy não roda como parte do sistema. O provider usa
-somente o servidor/protocolo documentado. H.264 usa WebCodecs quando suportado;
-navegador incompatível volta para snapshot. `screenrecord` pode ser probe ou
-fallback de laboratório, não streaming permanente.
+Esta sequência de screenshots não é vídeo. M2 não contém H.264, scrcpy-server,
+`screenrecord`, ffmpeg, áudio, WebCodecs, MediaProjection ou companion. Esses
+providers permanecem decisões futuras e não são fallback implícito.
 
 ### 7.5 Android Controller
 
-```go
-type AndroidController interface {
-    Provider
-    Key(context.Context, KeyEvent) OperationResult
-    Tap(context.Context, TouchEvent) OperationResult
-    Swipe(context.Context, SwipeEvent) OperationResult
-    Text(context.Context, TextEvent) OperationResult
-    App(context.Context, AppAction) OperationResult
-}
+```python
+class AndroidControlService:
+    async def tap(self, owner_id: str, frame: FrameReference,
+                  x: float, y: float) -> None: ...
+    async def swipe(self, owner_id: str, frame: FrameReference, start_x: float,
+                    start_y: float, end_x: float, end_y: float,
+                    duration_ms: int) -> None: ...
+    async def long_press(self, owner_id: str, frame: FrameReference, x: float, y: float,
+                         duration_ms: int) -> None: ...
+    async def key(self, owner_id: str, frame: FrameReference, action: str,
+                  confirmed: bool = False) -> None: ...
+    async def text(self, owner_id: str, frame: FrameReference, text: str) -> None: ...
 ```
 
-Adapters:
+Todos os eventos, inclusive teclas e texto, exigem `stream_id`, `frame_id`,
+`display_id=0`, rotação, target e geração ADB conhecidos. O service compara
+sessão, frame, idade, identidade e rotação imediatamente antes do input, dentro
+do gate ADB após uma espera limitada. Coordenadas normalizadas `[0,1]` são
+convertidas no backend; frame ausente, antigo ou divergente é sempre recusado,
+inclusive para admin.
 
-- `adb-input`: baseline provável, por comandos tipados;
-- `scrcpy-control`: experimental, compartilhando a sessão/frame do stream;
-- `companion-accessibility`: futuro e manualmente habilitado.
+Limites do M2:
 
-Tap/swipe recebem coordenadas normalizadas e `frameId`; o application service
-converte para pixels somente se frame, rotação e display ainda coincidirem.
-Tap e swipe sem frame atual são sempre recusados, inclusive para admin. Ações
-sem coordenadas, como HOME/BACK, exigem allowlist e confirmação próprias e
-continuam bloqueadas quando puderem atingir fluxo destrutivo/lockscreen.
+- swipe: 100–2000 ms; long press: 500–3000 ms;
+- teclas: `home`, `back`, `recents`, `enter`, `volume_up`, `volume_down`,
+  `volume_mute`, `wake` e `sleep`; `sleep` exige confirmação adicional;
+- texto: 1–200 caracteres do conjunto `[A-Za-z0-9 .,@_+-]`;
+- máximo inicial: 12 ações por sessão a cada 2 segundos;
+- package name, intent, keycode numérico e argumento shell nunca vêm do cliente.
+
+O resultado de `adb shell input` é `unverified` até uma pós-condição observável
+em frame posterior. Unicode/IME Samsung, keyguard, diálogos protegidos, rotação
+via `dumpsys` e self-ADB permanecem experimentais. scrcpy-control e
+Accessibility não pertencem ao M2.
 
 ### 7.6 PowerShare
 
@@ -464,36 +526,44 @@ Superfície inicial planejada:
 | `GET /api/v1/events` | viewer | SSE de estados/operações/métricas |
 | `POST /api/v1/operations` | operator/admin | união discriminada estrita de ações tipadas |
 | `GET /api/v1/operations/{id}` | viewer | resultado/evidência |
-| `/api/v1/screen/*` | viewer/operator | snapshot/stream/control separado |
+| `GET /api/v1/adb/status` | autenticado | estado, target e identidade observada |
+| `GET /api/v1/screen/status` | autenticado | provider e último frame confirmado |
+| `WS /api/v1/screen/ws` | autenticado + same-origin | sequência de frames PNG com ACK |
+| `POST /api/v1/android/tap` | admin/operator | tap normalizado vinculado a frame |
+| `POST /api/v1/android/swipe` | admin/operator | swipe vinculado a frame |
+| `POST /api/v1/android/long-press` | admin/operator | long press vinculado a frame |
+| `POST /api/v1/android/key` | admin/operator | tecla allowlisted vinculada a frame |
+| `POST /api/v1/android/text` | admin/operator | texto ASCII restrito vinculado a frame |
 | `/api/v1/terminal/*` | admin | broker e reverse proxy ttyd |
 | `/api/v1/files/*` | papel por root | operações confinadas |
 
-O decoder rejeita campos desconhecidos e tipos de operação não registrados.
-Contrato REST é OpenAPI em `contracts/openapi.yaml` quando M1 o criar. Eventos
-SSE/WS usam envelope com `schemaVersion`, `eventId`, `requestId`, `type`,
-`observedAt` e `data`. Mensagem desconhecida é ignorada ou recusada sem fechar o
-core.
+Schemas de controle rejeitam campos desconhecidos e valores fora dos limites.
+O WebSocket autentica pelo cookie existente, valida `Origin`/`Host`, revalida a
+sessão periodicamente durante o stream e depois do ACK, envia metadados JSON
+antes dos bytes PNG e exige ACK exato mais `frame_acknowledged` antes de tornar
+um frame autoritativo para aquela sessão/stream.
+Mensagem desconhecida é recusada sem fechar o core.
 
 ## 9. Listeners, autenticação e TLS
 
-- `0.0.0.0:8443`: HTTPS LAN, certificado local persistente com fingerprint
-  exibido pela CLI;
-- `127.0.0.1:8080`: HTTP interno exclusivo do túnel gerenciado; nunca bind em
-  interface externa e nunca usado para o console;
+- `0.0.0.0:8080`: HTTP LAN temporário autorizado para M1/M2 pelo ADR 0002;
 - `8022`: convenção SSH do Termux existente, fora do controle do servidor;
 - portas `ttyd`: efêmeras e loopback.
 
-Se TLS LAN não puder ser criado, o servidor não faz fallback silencioso para
-HTTP externo; permanece loopback e informa erro de configuração.
+Enquanto não houver TLS, `:8080` é exclusivamente LAN e nunca pode ser publicado
+por túnel/WAN. A rede local não é considerada confidencial: não reutilizar senha
+e manter tokens/cookies de vida limitada. HTTPS LAN ou um listener loopback
+separado exigem milestone/ADR de hardening antes de acesso remoto.
 
-Cada listener injeta uma classe de ingresso no request context. Rotas de console
-são aceitas somente no listener LAN autenticado e recusadas na classe
-`remote-tunnel`, mesmo que o túnel alcance o mesmo core. Headers enviados pelo
-cliente não podem escolher ou sobrescrever essa classe.
+No M2 existe somente a classe de ingresso LAN. A futura classe
+`remote-tunnel` deverá vir de listener/proxy confiável separado e continuará
+sem acesso às rotas de console. Headers enviados pelo cliente não podem criar ou
+sobrescrever a classe de ingresso.
 
 Bootstrap gera token de alta entropia em arquivo modo `0600` e o mostra uma vez
-no terminal. A troca cria cookie `Secure`, `HttpOnly`, `SameSite=Strict`; ações
-mutáveis exigem CSRF e validação de `Origin`. Papéis:
+no terminal. A troca cria cookie `HttpOnly`, `SameSite=Strict`; no HTTP LAN do
+M1/M2 ele não pode usar `Secure`. Ações mutáveis exigem validação de
+`Origin`/`Host`, schemas estritos e rate limit. Papéis:
 
 - `viewer`: health, capacidades, métricas, screen read-only;
 - `operator`: controle e operações não administrativas;
@@ -518,65 +588,63 @@ de segurança.
 
 ## 10. Persistência
 
-Baseline sem banco/CGo:
+Runtime atual pelo ADR 0002:
 
 ```text
-${HOME}/.config/s10-control/config.json
-${HOME}/.local/share/s10-control/state.json
-${HOME}/.local/share/s10-control/audit/*.ndjson
-${HOME}/.cache/s10-control/
+${S10_CONTROL_DATA_DIR}/config.json
+${S10_CONTROL_DATA_DIR}/s10-control.sqlite3
+${S10_CONTROL_DATA_DIR}/bootstrap.token
 ```
 
-Os caminhos reais vêm do ambiente/Termux e são validados; a notação acima é
-conceitual. Config/state usam temp file no mesmo diretório, permissões restritas,
-`fsync` e rename. Audit é append-only, rotacionado por tamanho/tempo. Métricas
-recentes ficam primeiro em ring buffer. Banco só será considerado por ADR após
-prova de necessidade e compatibilidade no S10.
+Sem override, o diretório vem de `XDG_STATE_HOME` ou do home resolvido em runtime;
+nenhum prefixo Termux é hardcoded. Diretório e arquivos são privados. Config usa
+temp file no mesmo diretório, `fsync` e replace atômico; SQLite vem da biblioteca
+padrão do Python. Target/fingerprint ADB ficam somente na configuração local e
+nunca são aprendidos automaticamente. PNGs ficam em memória; capturas manuais de
+probe usam diretório temporário privado e nunca entram no Git.
 
 ## 11. Degradação e prioridade de recursos
 
 | Evento | Estado/fallback |
 |---|---|
 | ADB indisponível | adapters ADB abrem circuito; módulos locais continuam |
-| scrcpy falha | fecha socket/processo, volta a PNG; depois unavailable |
-| WebCodecs ausente | snapshot, sem transcodificação obrigatória |
+| captura PNG falha | tela/controle ficam unavailable; dashboard/core continuam |
+| cliente PNG lento | fila mantém somente o frame mais recente; memória permanece limitada |
+| ACK ausente/inválido | frame não é autorizado para controle; socket encerra com erro |
 | companion sai | remove somente capacidades companion |
-| Termux:API falha | mantém métricas Go/POSIX e, se houver, ADB |
+| Termux:API falha | mantém métricas Python/POSIX e, se houver, ADB |
 | túnel falha | LAN não muda; sidecar usa restart budget/backoff |
 | shared storage revogada | root compartilhada desaparece; `project-share` permanece |
 | ttyd ausente | console web unavailable; SSH manual permanece fora do core |
-| pressão térmica/CPU | pausa vídeo, reduz polling, preserva auth/health |
+| pressão térmica/CPU | reduz/pausa polling PNG, preserva auth/health |
 | fila cheia | rejeita nova operação com backpressure; não cresce sem limite |
 
-Prioridade de sobrevivência: autenticação/health > LAN/API > auditoria > arquivos
-e serviços > métricas > snapshot > stream/transcodificação.
+Prioridade de sobrevivência: autenticação/health > LAN/API > auditoria > métricas
+> snapshot/controle. H.264/transcodificação não existe no M2.
 
 ## 12. Dependências escolhidas
 
-> O ADR 0002 substitui as subseções de runtime do M0. Referências históricas a
-> Go/Preact/JSON abaixo descrevem a opção descartada e não são instruções de
-> implementação do M1.
-
-### 12.0 Runtime M1
+### 12.1 Runtime M1/M2
 
 - Termux: `python` 3.11+, `nodejs-lts` e `termux-services`; a instalação é
   manual e revisável, sem tocar em `sshd`.
-- Backend: FastAPI, Pydantic v1 (fallback puro), Uvicorn e `sqlite3` da
+- Backend: FastAPI 0.124.4, Starlette 0.50.0, Pydantic 1.10.26 (wheel puro),
+  Uvicorn 0.51.0, wsproto 1.3.2 e `sqlite3` da
   biblioteca padrão; sem ORM, CGO ou extensão nativa obrigatória.
-- Frontend: React, ReactDOM, TypeScript, Vite e tipos fixados em
+- Frontend: React, ReactDOM, compilador JavaScript TypeScript 6.0.2, Vite e tipos fixados em
   `apps/web/package-lock.json`.
 - Os assets são compilados em `apps/server/web_dist/` e servidos pelo FastAPI.
-- Em M1 o backend escuta `0.0.0.0:8080` por determinação do proprietário;
+- Em M1/M2 o backend escuta `0.0.0.0:8080` por determinação do proprietário;
   ingressos remoto/túnel seguem desativados.
 
-### 12.1 Pacotes Termux
+### 12.2 Pacotes Termux
 
 | Pacote/app | Papel | Classe |
 |---|---|---|
 | `ca-certificates`, `git` | bootstrap/versionamento | requerido para desenvolvimento |
-| `golang` | build do backend ARM64/Bionic | build-only no aparelho |
+| `python` | backend e testes | runtime; validar 3.11+ no S10 |
 | `nodejs-lts` | build do frontend | build-only |
-| `android-tools` | cliente/server ADB | opcional por capacidade |
+| `android-tools` | cliente/server ADB do M2 | opcional; instalação e pairing manuais |
 | `openssh` | recuperação e reverse SSH | requerido operacional; protegido |
 | `termux-services` | supervisão runit | requerido operacional |
 | `ttyd` | UI do console allowlisted em loopback | opcional, terminal |
@@ -588,24 +656,26 @@ e serviços > métricas > snapshot > stream/transcodificação.
 Usar somente repositório oficial Termux compatível com a origem do app. Não
 misturar APKs F-Droid/GitHub/Play por causa das assinaturas.
 
-### 12.2 Backend Go
+M2 não adiciona scrcpy-server, ffmpeg, codec H.264, MediaProjection ou APK.
+`android-tools` precisa ser provado no Termux aarch64/Bionic do S10 antes de
+qualquer classe `guaranteed`.
 
-- standard library: HTTP, TLS, JSON, crypto, `slog`, embed e testes;
-- `github.com/coder/websocket`: WebSocket quando screen/terminal exigirem;
-- nenhuma ORM, SQLite, CGO ou framework HTTP no baseline;
-- versão exata e hashes entram em `go.mod`/`go.sum` no M1, depois de `go env` e
-  build no Termux real.
+### 12.3 Backend Python
 
-### 12.3 Frontend
+- dependências fixadas em `apps/server/requirements.lock`;
+- subprocessos somente por `asyncio.create_subprocess_exec`, nunca shell;
+- PNG validado com biblioteca padrão (`struct`), sem Pillow/codec nativo;
+- WebSocket fornecido por FastAPI/Uvicorn com loop `asyncio`, HTTP `h11` e
+  `wsproto` puro Python explicitamente fixados;
+- fakes de ADB/screen/control executam em host sem telefone.
 
-- TypeScript;
-- Vite;
-- Preact;
-- APIs nativas Fetch, EventSource e WebCodecs; `@xterm/xterm` não é necessário
-  enquanto o frontend do `ttyd` for usado;
-- versões ficam presas em `package-lock.json` quando M1 criar o app.
+### 12.4 Frontend
 
-### 12.4 Companion Android
+- React + TypeScript + Vite com `package-lock.json` versionado;
+- WebSocket e Blob/object URL nativos para frames `image/png`;
+- sem WebCodecs, H.264, canvas de transcodificação ou dependência de CDN no M2.
+
+### 12.5 Companion Android futuro
 
 Kotlin + Android SDK/AndroidX mínimos, build em workstation/CI Android (não como
 dependência do runtime Termux). `minSdk` e versões só serão fixados após o probe
@@ -614,28 +684,24 @@ do firmware. Nenhum SDK Samsung privado será incorporado sem ADR e licença.
 ## 13. Build e distribuição
 
 1. Vite gera assets estáticos, sem recursos remotos.
-2. O backend incorpora `dist/` via `go:embed`.
-3. O binário é compilado no próprio Termux ou em toolchain Android/NDK
-   equivalente; `GOOS=linux`/glibc genérico não é artefato válido.
-4. CI de host executa unit/contract tests; o S10 executa build, integração e
-   smoke tests.
+2. O build copia os assets para `apps/server/web_dist/`, servido pelo FastAPI.
+3. O backend instala o lock Python em venv privado. Wheel glibc genérico ou
+   extensão nativa não comprovada no Termux aarch64/Bionic é inválida.
+4. Testes de host usam adapters falsos; o S10 executa integração e smoke tests
+   seguros conforme o runbook, com o proprietário presente.
 5. Release inclui checksums, SBOM simples, instruções de rollback e nunca inclui
    configuração/segredos.
-
-Não haverá manifesto de dependências fictício no M0. O próximo milestone cria e
-valida os lockfiles.
 
 ## 14. Estrutura do repositório
 
 ```text
 apps/
   server/
-    cmd/s10control/
-    internal/{api,app,audit,auth,capabilities,operations,policy,store,execx}/
-    internal/modules/{adb,screen,controller,powershare,metrics,network}/
-    internal/modules/{remote,services,terminal,files}/
+    src/s10_control/{adb,android_control,auth,config,database,main,metrics,screen}.py
+    tests/
+    web_dist/
   web/
-    src/{app,features,lib}/
+    src/
   companion/
 contracts/
 config/
@@ -645,18 +711,22 @@ scripts/
 tests/{contract,integration,device}/
 ```
 
-Os diretórios são fronteiras, não microserviços. `contracts` é a única fonte de
-tipos de transporte entre backend e frontend.
+Os diretórios são fronteiras, não microserviços. No M2, modelos Pydantic são a
+fonte autoritativa REST e o protocolo WebSocket está fixado no ADR/testes, com
+validação espelhada em TypeScript. Geração/versionamento em `contracts` fica
+para o hardening futuro.
 
 ## 15. Estratégia de teste
 
-- domain/application: fakes de todos os ports, sem telefone;
+- domain/application: fakes de ADB, screen e controller, sem telefone;
 - policy: tabela negativa obrigatória para cada comando proibido;
 - contract: OpenAPI/envelopes e códigos de erro;
 - integration: binários falsos em `PATH` controlado, timeouts e saída excessiva;
-- Termux: build ARM64, permissões, runit, TLS e LAN offline;
+- Termux: Python/locks ARM64, permissões, runit, LAN offline e `android-tools`;
 - S10: testes manuais/automatizados seguros definidos por milestone em
   `PLAN.md`, sempre registrando build/firmware/evidência.
 
 Testes destrutivos não existem. Falhas reais são simuladas por adapters ou
 configuração inválida, não desligando Wi-Fi/SSH ou revogando ADB.
+O M2 também prova que não há H.264/scrcpy e que `kill-server`, `reboot`,
+`tcpip`, pareamento e comandos shell arbitrários não são alcançáveis pela API.

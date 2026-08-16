@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .adb import AdbController
 from .config import Settings
 
 
@@ -114,8 +115,9 @@ async def _battery_sample() -> dict[str, Any]:
 
 
 class MetricsService:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, adb: AdbController | None = None):
         self.settings = settings
+        self.adb = adb
         self.started_monotonic = time.monotonic()
 
     def uptime(self) -> dict[str, Any]:
@@ -155,14 +157,19 @@ class MetricsService:
         lan_addresses = classify_addresses(addresses)
         internet = await _port_open(self.settings.internet_probe.host, self.settings.internet_probe.port, self.settings.internet_probe.timeout_seconds)
         ssh = await _port_open("127.0.0.1", self.settings.ssh_probe_port, 0.25)
-        adb_available = shutil.which("adb") is not None
+        adb_status = {
+            "support_class": "experimental",
+            **(self.adb.current_status.to_dict() if self.adb else {
+                "state": "unavailable", "reason": "ADB_PROVIDER_MISSING"
+            }),
+        }
         return {
             "addresses": addresses,
             "lan": {"state": "online" if lan_addresses else "degraded", "addresses": lan_addresses, "reason": None if lan_addresses else "NO_PRIVATE_ADDRESS_VISIBLE"},
             "internet": {"state": "online" if internet else "offline", "reason": None if internet else "PROBE_UNREACHABLE"},
             "ssh": {"state": "online" if ssh else "offline", "port": self.settings.ssh_probe_port, "reason": None if ssh else "LOOPBACK_PORT_UNREACHABLE"},
-            "adb": {"state": "unavailable", "reason": "NOT_PROBED_IN_M1", "binary_present": adb_available},
-            "remote_access": {"state": "offline", "reason": "DISABLED_IN_M1"},
+            "adb": adb_status,
+            "remote_access": {"state": "offline", "reason": "NOT_IMPLEMENTED"},
         }
 
     async def battery(self) -> dict[str, Any]:

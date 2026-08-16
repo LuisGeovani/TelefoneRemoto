@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from s10_control.adb import AdbState, MockAdbController
 from s10_control.config import load_settings
 from s10_control.metrics import MetricsService, classify_addresses, parse_meminfo, parse_proc_stat, parse_uptime
 
@@ -24,7 +25,10 @@ class ParserTests(unittest.TestCase):
 class DegradationTests(unittest.IsolatedAsyncioTestCase):
     async def test_internet_offline_does_not_affect_local_metrics(self):
         with tempfile.TemporaryDirectory() as directory:
-            service = MetricsService(load_settings(Path(directory)))
+            service = MetricsService(
+                load_settings(Path(directory)),
+                MockAdbController(AdbState.UNAVAILABLE, reason="ADB_BINARY_MISSING"),
+            )
             with patch("s10_control.metrics._port_open", side_effect=[False, False]):
                 network = await service.network()
             self.assertEqual(network["internet"]["state"], "offline")
@@ -33,7 +37,10 @@ class DegradationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_adb_is_a_state_not_an_exception(self):
         with tempfile.TemporaryDirectory() as directory:
-            service = MetricsService(load_settings(Path(directory)))
-            with patch("s10_control.metrics.shutil.which", return_value=None), patch("s10_control.metrics._port_open", return_value=False):
+            adb = MockAdbController(AdbState.UNAVAILABLE, reason="ADB_BINARY_MISSING")
+            service = MetricsService(load_settings(Path(directory)), adb)
+            with patch("s10_control.metrics._port_open", return_value=False):
                 network = await service.network()
-            self.assertEqual(network["adb"], {"state": "unavailable", "reason": "NOT_PROBED_IN_M1", "binary_present": False})
+            self.assertEqual(network["adb"]["state"], "unavailable")
+            self.assertEqual(network["adb"]["reason"], "ADB_BINARY_MISSING")
+            self.assertEqual(adb.commands, [])
