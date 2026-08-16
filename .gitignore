@@ -31,6 +31,12 @@ apps/server/coverage.out
 apps/server/*.test
 apps/server/s10control
 apps/server/s10control.exe
+apps/server/.venv/
+apps/server/.test-deps*/
+apps/server/web_dist/
+apps/server/src/*.egg-info/
+__pycache__/
+*.py[cod]
 
 # Frontend dependencies/build
 node_modules/

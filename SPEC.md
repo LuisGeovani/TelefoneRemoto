@@ -232,8 +232,9 @@ opcional e nunca altera o caminho LAN.
   segredos.
 - **NFR-002 Local-first:** build da UI não consulta Internet em runtime; health e
   core permanecem íntegros sem WAN.
-- **NFR-003 Compatibilidade:** runtime aarch64/Bionic; build Go no Termux ou em
-  ambiente Android NDK equivalente, nunca binário glibc genérico.
+- **NFR-003 Compatibilidade:** runtime aarch64/Bionic; no M1, Python/Node são
+  instalados pelo repositório oficial Termux e os pacotes Python não podem exigir
+  binário glibc genérico. Qualquer extensão nativa requer prova no SM-G975F.
 - **NFR-004 Recursos:** um processo principal; subprocessos sob demanda. Alvos
   iniciais a medir no M1: até 150 MiB RSS ocioso e no máximo 1% de um core em
   idle, sem transformar esses alvos ainda não medidos em garantia.

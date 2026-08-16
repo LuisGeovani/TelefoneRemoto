@@ -1,4 +1,5 @@
 # Frontend
 
-Futura SPA TypeScript/Preact/Vite, sem CDN e orientada pelo registro de
-capacidades. O M0 não contém `package.json` nem código executável.
+SPA React/TypeScript/Vite sem CDN. `npm run build` gera `../server/web_dist/`,
+que é servido pelo FastAPI. O painel é mobile-first, dark, tem PWA básica e
+consome exclusivamente `/api/v1` do mesmo host.

@@ -65,39 +65,31 @@ runtime; o inventário é gate obrigatório antes de validar M1 no aparelho.
 
 **Versão sugerida após aceite:** `v0.0.1-foundation`.
 
-## Milestone 1 — fundação local (próximo agente)
+## Milestone 1 — painel local funcional
 
 ### Escopo exato
 
-Implementar somente:
+Implementar somente o escopo autorizado pelo proprietário no ADR 0002:
 
-1. módulo Go em `apps/server` e comandos:
-   - `s10control serve`;
-   - `s10control doctor` estritamente read-only;
-   - `s10control version`;
-   - `s10control auth reset` local, explicitamente mutável e confirmado;
-2. paths portáveis, configuração JSON validada e store com escrita atômica;
-3. logging estruturado, request IDs e redaction;
-4. tipos comuns de capability, operation e erro;
-5. NullProviders para **todos** os módulos, sem chamar ADB/Android/binários;
-6. policy engine com testes negativos para as proibições de `AGENTS.md`;
-7. autenticação por token bootstrap one-time, sessão, emissão por papel,
-   rotação/revogação e recuperação por `s10control auth reset` local;
-8. endpoints:
-   - `GET /api/v1/health/live`;
-   - `GET /api/v1/health/ready`;
-   - `GET /api/v1/capabilities`;
-9. listener HTTPS LAN em porta não privilegiada e HTTP somente loopback;
-10. SPA mínima Preact/TypeScript embutida, mostrando health e NullProviders;
-11. templates runit para **apenas** `s10-control`, sem instalar/alterar `sshd`;
-12. unit, policy, contract e integração do core; lockfiles versionados;
-13. guia de instalação manual e rollback do serviço do projeto.
+1. backend Python/FastAPI com configuração JSON estruturada, SQLite, logs JSON
+   e tratamento global de erros;
+2. bootstrap de administrador one-time, sessão HttpOnly/SameSite=Strict,
+   logout e reset local `s10-control auth reset`;
+3. health, sistema, CPU, RAM, armazenamento, uptime, rede e bateria opcional;
+4. estados separados para servidor, LAN, Internet, SSH, ADB e Remote Access;
+5. listener LAN `0.0.0.0:8080`; Internet/ADB ausentes são degradados, não
+   unhealthy; nenhum ADB é executado;
+6. dashboard React/TypeScript/Vite mobile-first, dark, com PWA básica e cards;
+7. serviço runit somente para `s10-control`, scripts de instalação/atualização
+   sem restart do telefone nem alteração de SSH/Wi-Fi/ADB;
+8. testes de parsers, métricas, Internet offline e ADB ausente; lockfile npm.
 
 ### Fora do M1
 
-Não implementar ADB real, screenshot/stream, input Android, PowerShare, métricas
-reais, network inspector real, túnel, terminal/ttyd, arquivos, ServiceManager,
-Termux:API ou companion. Não instalar dependência no telefone automaticamente.
+Não implementar screenshot/stream, input Android, PowerShare, terminal/ttyd,
+Cloudflare, Tailscale, package manager, file manager, túnel, ServiceManager ou
+companion. A bateria usa Termux:API somente se já instalada; não há instalação
+automática no aparelho nem chamada ADB real.
 
 ### Testes no S10 real
 

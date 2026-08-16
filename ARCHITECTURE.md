@@ -1,12 +1,12 @@
 # Arquitetura do S10 Control Server
 
-- **Status:** decisão-base para M0; implementação ainda não iniciada
+- **Status:** M1 autorizado; runtime substituído pelo ADR 0002
 - **Estilo:** monólito modular, hexagonal/ports-and-adapters, local-first
 
 ## 1. Decisão principal
 
-O sistema terá um único backend principal em Go executado no Termux. Ele serve
-uma SPA Preact/TypeScript embutida e coordena providers locais. ADB, captura,
+O sistema terá um único backend principal Python/FastAPI executado no Termux.
+Ele serve uma SPA React/TypeScript compilada localmente e coordena providers locais. ADB, captura,
 controle Android, Termux:API, `ttyd`, runit e túnel são dependências opcionais,
 nunca partes do núcleo.
 
@@ -16,9 +16,9 @@ descartados.
 
 ```mermaid
 flowchart LR
-    lan["Navegador na LAN"] -->|"HTTPS :8443"| core["s10-control (Go)"]
+    lan["Navegador na LAN"] -->|"HTTP :8080 (M1)"| core["s10-control (FastAPI)"]
     remote["Cliente remoto opcional"] --> tunnel["Túnel outbound opcional"]
-    tunnel -->|"HTTP loopback :8080"| core
+    tunnel -->|"futuro; desligado no M1"| core
 
     core --> ui["SPA local embutida"]
     core --> adb["ADB Gateway"]
@@ -552,6 +552,22 @@ Prioridade de sobrevivência: autenticação/health > LAN/API > auditoria > arqu
 e serviços > métricas > snapshot > stream/transcodificação.
 
 ## 12. Dependências escolhidas
+
+> O ADR 0002 substitui as subseções de runtime do M0. Referências históricas a
+> Go/Preact/JSON abaixo descrevem a opção descartada e não são instruções de
+> implementação do M1.
+
+### 12.0 Runtime M1
+
+- Termux: `python` 3.11+, `nodejs-lts` e `termux-services`; a instalação é
+  manual e revisável, sem tocar em `sshd`.
+- Backend: FastAPI, Pydantic v1 (fallback puro), Uvicorn e `sqlite3` da
+  biblioteca padrão; sem ORM, CGO ou extensão nativa obrigatória.
+- Frontend: React, ReactDOM, TypeScript, Vite e tipos fixados em
+  `apps/web/package-lock.json`.
+- Os assets são compilados em `apps/server/web_dist/` e servidos pelo FastAPI.
+- Em M1 o backend escuta `0.0.0.0:8080` por determinação do proprietário;
+  ingressos remoto/túnel seguem desativados.
 
 ### 12.1 Pacotes Termux
 

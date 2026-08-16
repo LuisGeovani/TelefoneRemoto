@@ -1,0 +1,5 @@
+#!/system/bin/sh
+# Only manages s10-control. It never touches sshd, Wi-Fi, ADB, or the phone lifecycle.
+: "${PREFIX:=${HOME}/../usr}"
+export PATH="${PREFIX}/bin:${PATH}"
+exec python -m s10_control serve

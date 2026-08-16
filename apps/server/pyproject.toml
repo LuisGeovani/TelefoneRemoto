@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "s10-control"
+version = "0.1.0"
+description = "Local-first control dashboard for a Samsung Galaxy S10+ running Termux"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.12",
+  "pydantic==1.10.26",
+  "uvicorn==0.30.6",
+]
+
+[project.optional-dependencies]
+test = ["httpx==0.27.2"]
+
+[project.scripts]
+s10-control = "s10_control.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.unittest]
+start-directory = "tests"
