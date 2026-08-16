@@ -1,0 +1,56 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+.android/
+config/local/
+config/*.local.json
+
+# Runtime state and user data
+var/*
+!var/.gitkeep
+*.log
+*.pid
+*.sock
+*.db
+*.sqlite
+*.sqlite3
+*.ndjson
+!tests/**/*.ndjson
+captures/
+recordings/
+
+# Go build/test outputs
+apps/server/bin/
+apps/server/coverage.out
+apps/server/*.test
+apps/server/s10control
+apps/server/s10control.exe
+
+# Frontend dependencies/build
+node_modules/
+apps/web/dist/
+apps/web/coverage/
+*.tsbuildinfo
+
+# Android/Gradle outputs
+.gradle/
+apps/companion/local.properties
+apps/companion/**/build/
+*.apk
+*.aab
+
+# Tool/editor/OS state
+.agents/
+.codex/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

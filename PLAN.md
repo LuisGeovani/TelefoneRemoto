@@ -376,8 +376,8 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 
 ## Estratégia Git
 
-- M0: commits `docs: establish S10 Control Server foundation` e
-  `chore: scaffold project module boundaries`;
+- M0: commits `docs: define S10 Control Server architecture` e
+  `chore: scaffold project foundation`;
 - próximo trabalho: branch `codex/m1-foundation` criada a partir de `main` após
   publicação/aceite desta base;
 - Conventional Commits e mudanças de estado no mesmo commit relevante;
