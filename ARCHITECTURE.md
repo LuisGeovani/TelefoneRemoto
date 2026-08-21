@@ -310,9 +310,13 @@ segundo entre clientes autenticados. O padrão permite dois viewers simultâneos
 backpressure, o frame anterior é descartado. Metadados e bytes são enviados
 separadamente pelo WebSocket. Cada assinante recebe `stream_id` individual e
 confirma exatamente `stream_id` e `frame_id`; o servidor responde
-`frame_acknowledged` somente após o commit. O `FrameRegistry` guarda apenas o
-frame confirmado daquela sessão/stream, com epoch de invalidação; outro usuário
-ou ACK tardio não pode reutilizá-lo.
+`frame_acknowledged` somente após o commit. O `FrameRegistry` guarda o frame
+confirmado mais recente daquela sessão/stream, com epoch de invalidação; outro
+usuário ou ACK tardio não pode reutilizá-lo. Uma ação que já validou esse frame
+pode manter um lease interno somente enquanto aguarda o gate ADB. ACK normal do
+frame seguinte não cancela a ação em voo, mas expiração, logout/revogação,
+fechamento do stream, erro do provider, rotação ou mudança de target/geração
+invalidam o lease antes do input. Leases são removidos ao fim da ação.
 Sem clientes, o produtor para e o registro correspondente é limpo. Captura,
 rotação anterior/posterior, target, `transport_id` e geração são observados sob
 o mesmo scheduler limitado, que prioriza controles sem permitir starvation;

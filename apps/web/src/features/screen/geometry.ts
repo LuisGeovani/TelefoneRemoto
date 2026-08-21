@@ -2,6 +2,28 @@ export type NormalizedPoint = { x: number; y: number };
 
 type Rect = Pick<DOMRect, "left" | "top" | "width" | "height">;
 
+export type ContainedFrameRect = Rect;
+
+export function containedFrameRect(
+  container: Rect,
+  frameWidth: number,
+  frameHeight: number,
+): ContainedFrameRect | null {
+  if (container.width <= 0 || container.height <= 0 || frameWidth <= 0 || frameHeight <= 0) {
+    return null;
+  }
+
+  const scale = Math.min(container.width / frameWidth, container.height / frameHeight);
+  const width = frameWidth * scale;
+  const height = frameHeight * scale;
+  return {
+    left: container.left + (container.width - width) / 2,
+    top: container.top + (container.height - height) / 2,
+    width,
+    height,
+  };
+}
+
 export function pointInContainedFrame(
   clientX: number,
   clientY: number,
@@ -9,34 +31,18 @@ export function pointInContainedFrame(
   frameWidth: number,
   frameHeight: number,
 ): NormalizedPoint | null {
-  if (container.width <= 0 || container.height <= 0 || frameWidth <= 0 || frameHeight <= 0) {
-    return null;
-  }
-
-  const containerRatio = container.width / container.height;
-  const frameRatio = frameWidth / frameHeight;
-  let renderedWidth = container.width;
-  let renderedHeight = container.height;
-  let offsetX = 0;
-  let offsetY = 0;
-
-  if (containerRatio > frameRatio) {
-    renderedWidth = container.height * frameRatio;
-    offsetX = (container.width - renderedWidth) / 2;
-  } else if (containerRatio < frameRatio) {
-    renderedHeight = container.width / frameRatio;
-    offsetY = (container.height - renderedHeight) / 2;
-  }
-
-  const localX = clientX - container.left - offsetX;
-  const localY = clientY - container.top - offsetY;
-  if (localX < 0 || localY < 0 || localX > renderedWidth || localY > renderedHeight) {
+  const rendered = containedFrameRect(container, frameWidth, frameHeight);
+  if (!rendered) return null;
+  const localX = clientX - rendered.left;
+  const localY = clientY - rendered.top;
+  const epsilon = Math.max(rendered.width, rendered.height, 1) * Number.EPSILON * 8;
+  if (localX < -epsilon || localY < -epsilon || localX > rendered.width + epsilon || localY > rendered.height + epsilon) {
     return null;
   }
 
   return {
-    x: Math.min(1, Math.max(0, localX / renderedWidth)),
-    y: Math.min(1, Math.max(0, localY / renderedHeight)),
+    x: Math.min(1, Math.max(0, localX / rendered.width)),
+    y: Math.min(1, Math.max(0, localY / rendered.height)),
   };
 }
 

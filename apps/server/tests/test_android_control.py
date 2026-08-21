@@ -134,7 +134,7 @@ class FrameBoundControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.code, "STALE_FRAME")
         self.assertEqual(adb.commands, [])
 
-    async def test_frame_change_while_waiting_for_adb_blocks_execution(self):
+    async def test_next_1fps_ack_does_not_stale_an_inflight_fresh_control(self):
         class BlockingRotationAdb(MockAdbController):
             def __init__(self):
                 super().__init__(rotation=0)
@@ -164,7 +164,7 @@ class FrameBoundControlTests(unittest.IsolatedAsyncioTestCase):
         initial = frame_metadata(frame_id="frame-before-wait")
         replacement = replace(
             frame_metadata(frame_id="frame-after-wait"),
-            observed_monotonic=initial.observed_monotonic + 0.001,
+            observed_monotonic=initial.observed_monotonic + 1.0,
         )
         registry = FrameRegistry()
         registry.confirm(OWNER_ID, initial)
@@ -174,6 +174,60 @@ class FrameBoundControlTests(unittest.IsolatedAsyncioTestCase):
         operation = asyncio.create_task(service.tap(OWNER_ID, reference_for(initial), 0.5, 0.5))
         await asyncio.wait_for(adb.rotation_started.wait(), timeout=1.0)
         registry.confirm(OWNER_ID, replacement)
+        adb.release_rotation.set()
+
+        await operation
+        self.assertEqual(adb.commands, [TapCommand(50, 100)])
+
+    async def test_stream_invalidation_while_waiting_for_adb_revokes_control_lease(self):
+        class BlockingRotationAdb(MockAdbController):
+            def __init__(self):
+                super().__init__(rotation=0)
+                self.rotation_started = asyncio.Event()
+                self.release_rotation = asyncio.Event()
+
+            async def execute(self, command, **kwargs) -> None:
+                self.rotation_started.set()
+                await self.release_rotation.wait()
+                await super().execute(command, **kwargs)
+
+        current = frame_metadata(stream_id="stream-invalidated")
+        registry = FrameRegistry()
+        registry.confirm(OWNER_ID, current)
+        adb = BlockingRotationAdb()
+        service = AndroidControlService(adb, registry, frame_max_age_seconds=5.0)
+
+        operation = asyncio.create_task(service.tap(OWNER_ID, reference_for(current), 0.5, 0.5))
+        await asyncio.wait_for(adb.rotation_started.wait(), timeout=1.0)
+        registry.invalidate_stream(current.stream_id)
+        adb.release_rotation.set()
+
+        with self.assertRaises(ControlError) as context:
+            await operation
+        self.assertEqual(context.exception.code, "STALE_FRAME")
+        self.assertEqual(adb.commands, [])
+
+    async def test_target_generation_change_while_waiting_still_fails_closed(self):
+        class BlockingRotationAdb(MockAdbController):
+            def __init__(self):
+                super().__init__(rotation=0)
+                self.rotation_started = asyncio.Event()
+                self.release_rotation = asyncio.Event()
+
+            async def execute(self, command, **kwargs) -> None:
+                self.rotation_started.set()
+                await self.release_rotation.wait()
+                await super().execute(command, **kwargs)
+
+        current = frame_metadata()
+        registry = FrameRegistry()
+        registry.confirm(OWNER_ID, current)
+        adb = BlockingRotationAdb()
+        service = AndroidControlService(adb, registry, frame_max_age_seconds=5.0)
+
+        operation = asyncio.create_task(service.tap(OWNER_ID, reference_for(current), 0.5, 0.5))
+        await asyncio.wait_for(adb.rotation_started.wait(), timeout=1.0)
+        adb.generation += 1
         adb.release_rotation.set()
 
         with self.assertRaises(ControlError) as context:

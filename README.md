@@ -5,8 +5,9 @@ executado no Termux, sem root e com o display físico inoperante.
 
 O projeto está no **Milestone 2**. A estabilização M2.1 `0.2.1` foi validada no
 SM-G975F real (runtime Termux, restart gracioso, recuperação do painel/WebSocket,
-preservação do SSH e telemetria LAN); self-ADB, PNG e controles Android reais
-continuam pendentes. O backend é Python/FastAPI com SQLite e a interface é
+preservação do SSH e telemetria LAN). A campanha M2 comprovou uma vez self-ADB,
+identidade e PNG real 720 × 1520, mas encontrou uma corrida de stale frame e
+crop portrait; as correções passaram no host e aguardam reteste no aparelho. O backend é Python/FastAPI com SQLite e a interface é
 React/TypeScript/Vite, compilada para assets locais e entregue pelo próprio
 backend. A base de trabalho é:
 

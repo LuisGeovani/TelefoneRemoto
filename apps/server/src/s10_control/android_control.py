@@ -16,7 +16,7 @@ from .adb import (
     TapCommand,
     TextCommand,
 )
-from .screen import FrameMetadata, FrameRegistry
+from .screen import FrameControlLease, FrameMetadata, FrameRegistry
 
 
 class ControlError(RuntimeError):
@@ -62,6 +62,10 @@ class AndroidControlService:
         frame = self.registry.current_for(owner_id, reference.stream_id)
         if frame is None:
             raise ControlError("FRAME_REQUIRED")
+        self._validate_frame(frame, reference)
+        return frame
+
+    def _validate_frame(self, frame: FrameMetadata, reference: FrameReference) -> None:
         if frame.stream_id != reference.stream_id or frame.frame_id != reference.frame_id:
             raise ControlError("STALE_FRAME")
         if frame.rotation is None:
@@ -79,6 +83,12 @@ class AndroidControlService:
             raise ControlError("STALE_FRAME")
         if time.monotonic() - frame.observed_monotonic > self.frame_max_age_seconds:
             raise ControlError("STALE_FRAME")
+
+    def _validated_lease(self, lease: FrameControlLease, reference: FrameReference) -> FrameMetadata:
+        frame = self.registry.frame_for_control(lease)
+        if frame is None:
+            raise ControlError("STALE_FRAME")
+        self._validate_frame(frame, reference)
         return frame
 
     @staticmethod
@@ -168,9 +178,13 @@ class AndroidControlService:
         command: TapCommand | SwipeCommand | LongPressCommand | KeyCommand | TextCommand,
         authorization_guard: Callable[[], None] | None,
     ) -> None:
+        lease = self.registry.begin_control(owner_id, frame)
+        if lease is None:
+            raise ControlError("STALE_FRAME")
+
         def revalidate() -> None:
             self._authorize(authorization_guard)
-            self._validated_frame(owner_id, reference)
+            self._validated_lease(lease, reference)
 
         try:
             await self.adb.execute(
@@ -183,3 +197,5 @@ class AndroidControlService:
         except AdbError as error:
             code = "STALE_FRAME" if error.code in {"ADB_TARGET_CHANGED", "ROTATION_CHANGED"} else error.code
             raise ControlError(code) from error
+        finally:
+            self.registry.end_control(lease)

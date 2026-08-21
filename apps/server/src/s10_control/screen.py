@@ -177,6 +177,20 @@ class StreamSubscription:
     queue: LatestFrameQueue
 
 
+@dataclass(frozen=True)
+class FrameControlLease:
+    """Internal authorization for one already-validated control request.
+
+    A normal ACK may advance the stream while the request waits for the ADB
+    operation gate.  Explicit stream/session invalidation still revokes the
+    lease immediately.
+    """
+
+    token: str
+    owner_id: str
+    metadata: FrameMetadata
+
+
 class FrameRegistry:
     """Stores each session's newest frame acknowledged on its own stream."""
 
@@ -185,6 +199,7 @@ class FrameRegistry:
         self._deliveries: dict[str, tuple[int, str]] = {}
         self._stream_epochs: dict[str, int] = {}
         self._invalidated_before = 0.0
+        self._control_leases: dict[str, FrameControlLease] = {}
 
     def current_for(self, owner_id: str, stream_id: str | None = None) -> FrameMetadata | None:
         if stream_id is not None:
@@ -212,6 +227,23 @@ class FrameRegistry:
             self._frames[key] = metadata
         return True
 
+    def begin_control(self, owner_id: str, metadata: FrameMetadata) -> FrameControlLease | None:
+        current = self.current_for(owner_id, metadata.stream_id)
+        if current is None or current.frame_id != metadata.frame_id:
+            return None
+        lease = FrameControlLease(str(uuid.uuid4()), owner_id, metadata)
+        self._control_leases[lease.token] = lease
+        return lease
+
+    def frame_for_control(self, lease: FrameControlLease) -> FrameMetadata | None:
+        active = self._control_leases.get(lease.token)
+        if active != lease:
+            return None
+        return active.metadata
+
+    def end_control(self, lease: FrameControlLease) -> None:
+        self._control_leases.pop(lease.token, None)
+
     def invalidate_stream(self, stream_id: str) -> None:
         self._stream_epochs[stream_id] = self._stream_epochs.get(stream_id, 0) + 1
         self._deliveries.pop(stream_id, None)
@@ -223,14 +255,25 @@ class FrameRegistry:
             for key, frame in self._frames.items()
             if key[1] != stream_id
         }
+        self._control_leases = {
+            token: lease
+            for token, lease in self._control_leases.items()
+            if lease.metadata.stream_id != stream_id
+        }
 
     def clear_owner(self, owner_id: str) -> None:
         self._frames = {
             key: frame for key, frame in self._frames.items() if key[0] != owner_id
         }
+        self._control_leases = {
+            token: lease
+            for token, lease in self._control_leases.items()
+            if lease.owner_id != owner_id
+        }
 
     def clear_all(self) -> None:
         self._frames.clear()
+        self._control_leases.clear()
         self._deliveries.clear()
         self._invalidated_before = time.monotonic()
         for stream_id in tuple(self._stream_epochs):

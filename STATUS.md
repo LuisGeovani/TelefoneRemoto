@@ -1,10 +1,10 @@
 # Estado atual
 
 - **Atualizado em:** 2026-08-20 (America/Rio_Branco)
-- **Branch de trabalho:** `codex/m2.1-hardware-stabilization`
+- **Branch de trabalho:** `codex/m2-adb-hardware-validation`
 - **Versão:** `0.2.1`
-- **Milestone:** M2.1 concluída e validada no hardware; M2 ADB real permanece pendente
-- **Push:** autorizado explicitamente para o fechamento e a campanha M2 em hardware
+- **Milestone:** M2.1 concluída; validação M2 em hardware em andamento com duas correções aguardando reteste
+- **Push:** autorizado explicitamente para as duas correções M2 desta branch
 
 ## Resultado da estabilização M2.1
 
@@ -28,6 +28,28 @@ obtida no Samsung Galaxy S10+ SM-G975F real:
 Não foram adicionados PowerShare, H.264/scrcpy, terminal, arquivos, package
 manager, Cloudflare, Tailscale ou qualquer outro milestone.
 
+## Evidência parcial do M2 no hardware
+
+A campanha M2 posterior à estabilização comprovou, em uma única sessão segura
+no SM-G975F real:
+
+- self-ADB manual em estado `device`, sem alterar o ADB USB de recuperação;
+- modelo e fingerprint esperados validados pelo provider, sem registrar target,
+  fingerprint ou chaves no Git;
+- Dashboard com ADB `available`/`IDENTITY_VERIFIED`;
+- PNG real contínuo na Tela Remota: 720 × 1520, portrait, rotação 0°, WebSocket
+  online e aproximadamente 1 FPS;
+- `KEYCODE_HOME` e `input swipe` tipados executados diretamente no Termux
+  funcionaram, isolando o transporte/input Android dos defeitos da aplicação.
+
+Dois defeitos do S10 Control foram então observados: controles pela UI eram
+recusados como `STALE_FRAME` quando o ACK do frame seguinte avançava o registry
+enquanto a ação aguardava o gate ADB; e o PNG portrait aparecia ampliado/
+recortado em viewport largo. A correção no host mantém um lease interno somente
+para a ação já validada e usa uma imagem absoluta com `contain` centralizado,
+letterbox e mapeamento pela área efetivamente renderizada. **Essas correções
+ainda não foram validadas novamente no aparelho.**
+
 ## Evidência real no SM-G975F
 
 O projeto foi instalado em `~/s10-control` no Termux do SM-G975F, usuário
@@ -50,8 +72,8 @@ Validados no aparelho em um deploy real:
 | Rede | probe de Internet online e probe SSH online |
 | Termux:API | CLI e APK compatíveis instalados; `termux-battery-status` respondeu |
 | Bateria | dados reais apareceram no Dashboard |
-| Tela Remota | página mobile-first e controles carregaram |
-| WebSocket da UI | conexão funcionou novamente após o restart de `s10-control` |
+| Tela Remota | página mobile-first carregou; depois exibiu PNG ADB real 720 × 1520 continuamente |
+| WebSocket da UI | conexão funcionou após restart e na campanha M2 a aproximadamente 1 FPS |
 
 Essa é uma validação real, mas única. As capacidades acima permanecem na classe
 `probable`, não `guaranteed`, até haver execução repetível sob pré-condições
@@ -74,6 +96,12 @@ registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
 4. **Bateria:** instalar somente o pacote CLI `termux-api` não bastou e o comando
    aguardou o APK. Depois de instalar o app Termux:API de origem compatível, a
    coleta funcionou. Ausência do APK continua sendo degradação esperada.
+5. **Controle frame-bound:** o frame seguinte confirmado invalidava uma ação
+   fresca que já aguardava o gate ADB, produzindo `STALE_FRAME` continuamente em
+   1 FPS. A correção tem regressão no host e aguarda reteste real.
+6. **Viewport portrait:** o PNG 720 × 1520 participava do dimensionamento
+   intrínseco do grid e aparecia recortado em viewport largo. O layout agora
+   força `contain` centralizado e testa letterbox/mapeamento; aguarda reteste real.
 
 ## Classificação e estado verificável
 
@@ -84,39 +112,40 @@ registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
 | Listener e acesso LAN `0.0.0.0:8080` | `probable` | acesso real por `192.168.1.13` e telemetria correta após restart; teste sem WAN pendente |
 | SSH observacional | `probable` | probe e serviço real online; permanece protegido/read-only |
 | Termux:API e bateria | `probable` | APK+CLI compatíveis responderam no aparelho |
-| Frontend Tela Remota e WebSocket da UI | `probable` | página e conexão funcionando após restart validadas; sem frame ADB |
-| ADB no próprio Termux | `experimental` | desabilitado no deploy; transporte real não testado |
-| Screenshot PNG por ADB | `experimental` | somente mock/fixtures no host |
-| Controle Android vinculado ao frame | `experimental` | somente mock/contrato no host |
+| Frontend Tela Remota e WebSocket da UI | `probable` | página, WS e PNG real contínuo observados; correção de viewport aguarda reteste |
+| ADB no próprio Termux | `experimental` | uma conexão manual real chegou a `device` e passou identidade; repetição/reconnect pendentes |
+| Screenshot PNG por ADB | `experimental` | PNG real 720 × 1520, portrait/0°, ~1 FPS observado uma vez |
+| Controle Android vinculado ao frame | `experimental` | bug `STALE_FRAME` reproduzido no aparelho; correção passou no host e aguarda deploy/reteste |
 | Wake/sleep e `adb input text` | `experimental` | não executados no aparelho |
 | H.264/scrcpy e PowerShare | `experimental` | não implementados |
 | Operações que exigem root/privilégio de sistema | `privileged_required` | permanecem fora do projeto |
 
 ## Não validado no hardware
 
-- self-ADB/Wireless Debugging dentro do Termux;
-- seleção de target, modelo/fingerprint e mudança de porta reais;
-- screenshot PNG real e comportamento com display físico inoperante;
-- rotação real por `dumpsys input`;
+- repetição do self-ADB/reconnect e comportamento após mudança da porta do serviço;
+- rotação diferente de 0° e mudança real de orientação durante frame/ação;
 - tap, swipe, long press, HOME, BACK, RECENTS, ENTER e volume;
 - wake/sleep e texto ASCII;
-- frame-bound control, pós-condições, fullscreen móvel e gestos reais;
+- correções de lease/viewport, stale real, pós-condições, fullscreen móvel e gestos reais;
 - LAN com WAN indisponível, soak e consumo térmico/energético.
 
-ADB permaneceu `enabled: false` durante a validação M2.1; não foram executados
-`adb pair`, `connect`, `disconnect`, `kill-server`, `tcpip`, `root`, `unroot`,
-reboot ou revogação. Wi-Fi e SSH não foram alterados.
+ADB permaneceu `enabled: false` durante a validação M2.1. Na campanha M2,
+pareamento/conexão e configuração foram ações manuais do proprietário; o
+provider foi habilitado somente após identidade verificada. O projeto não
+executou `disconnect`, `kill-server`, `tcpip`, `root`, `unroot`, reboot,
+revogação, alteração de Wi-Fi ou ação sobre SSH.
 
 ## Validação no host desta branch
 
 - ambiente de teste: Python 3.12.13 com os pins exatos do runtime;
-- backend: 59 testes passaram e 1 regressão POSIX de SIGTERM foi pulada no
+- backend: 61 testes passaram e 1 regressão POSIX de SIGTERM foi pulada no
   Windows; a suíte inclui import em subprocesso, versões, LAN por socket/rota,
   `Range` recusado, timeout de shutdown, ADB degradado e todos os contratos M2;
 - a regressão SIGTERM fica habilitada automaticamente em Linux/Termux e mantém
   um WebSocket autenticado aberto durante o sinal;
-- frontend 0.2.1: `npm test` (typecheck) e `npm run build` passaram; Vite gerou
-  21 módulos e assets locais;
+- frontend 0.2.1: `npm test` passou typecheck e 5 regressões de layout/geometria
+  (contain, portrait, landscape, letterbox e coordenadas); `npm run build` gerou 21
+  módulos e assets locais;
 - `compileall` de source, testes e smoke passou;
 - `pip check` reportou `No broken requirements found`;
 - `smoke-python-runtime.py` importou o projeto em subprocesso e confirmou os
@@ -128,7 +157,7 @@ reboot ou revogação. Wi-Fi e SSH não foram alterados.
   que instalação/atualização executam o smoke antes do bootstrap/build, não
   iniciam automaticamente serviço novo e não reiniciam aparelho, rede, ADB ou
   SSH;
-- no fechamento documental, a matriz foi repetida: 59 testes backend passaram
+- no fechamento M2.1 anterior, a matriz foi repetida: 59 testes backend passaram
   com 1 skip POSIX esperado no Windows, smoke isolado, `compileall`, `pip check`,
   typecheck/build frontend, `bash -n` e `git diff --check` passaram;
 - nenhuma chamada tocou ADB, Wi-Fi, SSH ou o aparelho real.
@@ -164,7 +193,8 @@ upstream corrigida ser comprovada no Termux ARM64.
 4. A descoberta LAN funcionou no teste real depois de uma request por
    `192.168.1.13`; antes da primeira request, os fallbacks ainda dependem das
    rotas que o kernel expõe ao Termux.
-5. Self-ADB, PNG e input continuam totalmente não validados no hardware.
+5. Self-ADB, PNG e input Android foram comprovados uma vez, mas a integração de
+   controle pela UI e o novo layout ainda aguardam reteste no hardware.
 6. HTTP LAN não oferece confidencialidade e `:8080` não deve ser publicado por
    WAN ou túnel.
 7. Android/One UI ainda pode matar Termux e `sshd`; runit não garante uptime do
@@ -172,9 +202,8 @@ upstream corrigida ser comprovada no Termux ARM64.
 
 ## Próximo passo seguro
 
-M2.1 está aceita e encerrada. O próximo trabalho operacional, em tarefa
-separada, é validar o M2 já implementado: self-ADB manual, PNG e controles reais
-conforme o runbook, preservando a rota scrcpy USB e o SSH. O próximo milestone
+M2.1 está aceita e encerrada. O próximo passo é implantar somente estas duas
+correções pelo fluxo seguro existente e repetir no S10: frame inteiro, HOME,
+tap, swipe, long press, BACK/RECENTS e recusa de stale real. O próximo milestone
 novo numerado no `PLAN.md` é M3 (observabilidade local avançada), ainda não
-autorizado. Não iniciar M2 real, M3, PowerShare, H.264 ou outro milestone sem
-autorização específica.
+autorizado. Não iniciar M3, PowerShare, H.264 ou outro milestone.

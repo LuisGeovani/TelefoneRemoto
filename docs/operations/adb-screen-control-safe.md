@@ -15,6 +15,12 @@ apps/server/.venv/bin/python scripts/smoke-python-runtime.py
 apps/server/.venv/bin/python -m unittest discover -s apps/server/tests -v
 ```
 
+A campanha M2 já comprovou uma vez self-ADB `device`, identidade, PNG real
+720 × 1520 portrait/0° e stream de aproximadamente 1 FPS. Ela também encontrou
+recusa contínua `STALE_FRAME` nos controles e crop do portrait. As correções
+desta branch ainda exigem o reteste dos Checkpoints 5–7; não as trate como
+validadas no aparelho antes desse reteste.
+
 Com uma sessão SSH de recuperação mantida aberta e a Tela Remota conectada em
 outro equipamento, valide somente o lifecycle do projeto:
 
