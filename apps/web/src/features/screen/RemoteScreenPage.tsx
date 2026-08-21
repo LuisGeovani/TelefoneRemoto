@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { api, ApiError } from "../../lib/api";
+import { controlPresentation } from "./controlPresentation";
 import { isKnownRotation, pointInContainedFrame, type NormalizedPoint } from "./geometry";
 import type { AdbStatus, AndroidKeyAction, FrameReference, ScreenFrame } from "./types";
 import { useScreenStream } from "./useScreenStream";
@@ -126,6 +127,8 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
   const adb = newestAdbStatus(stream.adbStatus, dashboardAdb);
   const frame = stream.frame;
   const reference = frame ? frameReference(frame) : null;
+  const hasFrame = frame !== null;
+  const hasReference = reference !== null;
   const hasControlRole = role === "operator" || role === "admin";
   const freshnessWindow = Math.max(250, stream.frameMaxAgeSeconds * 1_000 - 500);
   const frameFresh = stream.confirmedAt !== null && now - stream.confirmedAt <= freshnessWindow;
@@ -135,7 +138,7 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
     && stream.frameConfirmed
     && frameFresh
     && adb.state === "available"
-    && reference !== null;
+    && hasReference;
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -288,17 +291,16 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
     }
   };
 
-  const controlReason = useMemo(() => {
-    if (!hasControlRole) return "Seu papel permite somente visualizar.";
-    if (adb.state !== "available") return `ADB ${adbLabel(adb)}${adb.reason ? ` · ${adb.reason}` : ""}.`;
-    if (stream.connection !== "online") return `Stream ${connectionLabel(stream.connection)}; último frame sem autorização de controle.`;
-    if (!frame) return "Aguardando primeira captura…";
-    if (!reference) return "Rotação não confirmada; controle bloqueado.";
-    if (!stream.frameConfirmed) return "Último frame preservado apenas como referência visual.";
-    if (!frameFresh) return "Frame antigo; aguarde uma nova captura.";
-    if (stream.ackPending) return "Último frame válido ativo; próxima captura em confirmação.";
-    return "Toque, arraste ou mantenha pressionado sobre a imagem.";
-  }, [adb, frame, frameFresh, hasControlRole, reference, stream.ackPending, stream.connection, stream.frameConfirmed]);
+  const controlUi = useMemo(() => controlPresentation({
+    hasControlRole,
+    adbState: adb.state,
+    adbReason: adb.reason ?? undefined,
+    connection: stream.connection,
+    hasFrame,
+    hasReference,
+    frameConfirmed: stream.frameConfirmed,
+    frameFresh,
+  }), [adb.reason, adb.state, frameFresh, hasControlRole, hasFrame, hasReference, stream.connection, stream.frameConfirmed]);
 
   const aspectStyle = {
     "--frame-aspect": frame ? `${frame.metadata.width} / ${frame.metadata.height}` : "9 / 16",
@@ -319,6 +321,7 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
     <div className="remote-status" aria-live="polite">
       <span className={`status-chip state-${stream.connection}`}>Stream: {connectionLabel(stream.connection)}</span>
       <span className={`status-chip state-${adb.state}`}>ADB: {adbLabel(adb)}</span>
+      <span className={`status-chip state-${controlUi.statusState}`}>{controlUi.status}</span>
       {adb.reason && <span className="status-detail">ADB: {adb.reason}</span>}
       {stream.lastError && <span className="status-detail">{stream.lastError}</span>}
     </div>
@@ -367,7 +370,7 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
             <span className={`dot ${canControl ? "online" : "degraded"}`} />
             <strong>Controle Android</strong>
           </div>
-          <small>{controlReason}</small>
+          <small>{controlUi.help}</small>
         </div>
 
         <div className="action-grid">

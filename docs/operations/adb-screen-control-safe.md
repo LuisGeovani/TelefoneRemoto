@@ -19,8 +19,10 @@ A campanha M2 já comprovou uma vez self-ADB `device`, identidade, PNG real
 720 × 1520 portrait/0° e stream de aproximadamente 1 FPS. Ela também encontrou
 recusa contínua `STALE_FRAME` nos controles e crop do portrait. Após `52c7510`,
 o proprietário confirmou o portrait inteiro e controles funcionais no painel.
-A correção posterior de flicker entre frames ainda exige reteste no Checkpoint
-5; não a trate como validada no aparelho antes desse reteste.
+A correção posterior de flicker da imagem foi validada no aparelho: o último
+frame permanece visível entre atualizações. A correção de estabilidade do texto
+auxiliar/status ainda exige reteste no Checkpoint 5; não a trate como validada
+antes desse reteste.
 
 Com uma sessão SSH de recuperação mantida aberta e a Tela Remota conectada em
 outro equipamento, valide somente o lifecycle do projeto:
@@ -344,6 +346,10 @@ No **Checkpoint 5**, sem enviar input:
    seguinte, sem texto, fundo vazio ou flicker sobre a superfície; em queda do
    stream, o último frame pode permanecer visível, mas deve indicar offline e
    bloquear controle até um novo frame confirmado.
+6. Durante streaming online, confirme que a ajuda “Toque, arraste ou mantenha
+   pressionado sobre a imagem.” permanece estável. Conexão, ADB e bloqueio de
+   controle podem mudar apenas nos badges; nenhum detalhe de frame/decode/ACK
+   deve alternar a ajuda ou causar salto de layout.
 
 No **Checkpoint 6**, confira no scrcpy o efeito de uma ação por vez, aguardando
 um frame novo entre elas:

@@ -37,3 +37,11 @@ URL aposentada é mantida entre trocas, além do frame e candidato atuais.
   canvas, H.264 ou double buffering complexo.
 
 Esta decisão complementa as ADRs 0003 e 0005 e aguarda reteste no S10 real.
+
+## Addendum de validação no hardware — 2026-08-20
+
+O deploy posterior no SM-G975F confirmou que a imagem não pisca, o último frame
+permanece visível entre atualizações, o portrait 720 × 1520 permanece inteiro e
+os controles continuam funcionais. Um flicker separado no texto auxiliar do
+painel foi observado; ele não altera este protocolo e é tratado como correção de
+apresentação de status, ainda pendente de reteste.

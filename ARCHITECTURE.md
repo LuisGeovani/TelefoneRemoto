@@ -330,6 +330,9 @@ candidato ao receber `frame_acknowledged`, fazendo uma troca visual direta. Em
 erro/reconnect, o último frame pode permanecer como referência visual marcada
 offline/stale, mas perde imediatamente a autorização de input. Blob URLs
 anteriores são revogadas somente depois que o novo `<img>` dispara `load`.
+O texto de ajuda à interação é independente do ciclo de frames; estados de
+stream, ADB, stale e bloqueio aparecem em badges discretos, não no lugar da
+ajuda nem sobre a superfície da tela.
 
 Esta sequência de screenshots não é vídeo. M2 não contém H.264, scrcpy-server,
 `screenrecord`, ffmpeg, áudio, WebCodecs, MediaProjection ou companion. Esses

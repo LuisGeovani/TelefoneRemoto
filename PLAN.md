@@ -125,10 +125,11 @@ Sem reboot. O teste de Termux:Boot não pertence ao M1.
 
 ## Milestone 2 — ADB, tela PNG e controle Android (etapa autorizada)
 
-**Estado:** núcleo funcional validado uma vez no SM-G975F. Self-ADB, identidade,
-PNG 720 × 1520, portrait inteiro e controles exercitados pelo painel funcionaram
-após `52c7510`. A correção final de flicker entre PNGs passou no host e aguarda
-reteste no aparelho; capacidades específicas não reportadas continuam pendentes.
+**Estado:** núcleo funcional e a apresentação atômica do PNG validados uma vez
+no SM-G975F. Self-ADB, identidade, PNG 720 × 1520, portrait inteiro, controles
+exercitados e ausência de flicker da imagem funcionaram no aparelho. A correção
+final de estabilidade do texto auxiliar passou no host e aguarda reteste;
+capacidades específicas não reportadas continuam pendentes.
 
 O M2 combina o gateway ADB, o ScreenProvider PNG e o AndroidController porque
 controle por coordenadas não pode existir sem referência visual atual. O
@@ -472,9 +473,10 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 ## Instrução exata ao próximo agente
 
 Leia os documentos raiz, ADRs 0003–0006 e o runbook. **Não implemente outro
-milestone.** M2.1 e o núcleo funcional M2 foram validados no SM-G975F. O próximo
-trabalho operacional é implantar e retestar somente a correção de flicker,
-preservando rota visual e SSH. O próximo milestone novo planejado é M3
-(observabilidade local avançada), ainda não autorizado. Não adicione H.264,
-scrcpy, PowerShare, pairing/connect automático, shell/intent/package arbitrário
-ou feature futura.
+milestone.** M2.1, o núcleo funcional M2 e a correção de flicker da imagem foram
+validados no SM-G975F. O próximo trabalho operacional é implantar e retestar
+somente a estabilidade do texto auxiliar/status, preservando rota visual e SSH.
+Após esse aceite, a próxima tarefa autorizável é M2.2, autenticação persistente
+de uma única conta administrativa; ela ainda não foi planejada nem autorizada.
+Não adicione H.264, scrcpy, PowerShare, pairing/connect automático,
+shell/intent/package arbitrário ou feature futura.

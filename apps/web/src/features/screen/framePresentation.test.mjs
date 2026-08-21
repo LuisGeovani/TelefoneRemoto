@@ -108,5 +108,7 @@ test("remote surface has no per-frame decode or loading overlay", async () => {
   assert.doesNotMatch(source, /Decodificando frame|Confirmando frame|frame-loading/);
   assert.doesNotMatch(styles, /\.frame-loading\s*\{/);
   assert.match(source, /Aguardando primeira captura/);
+  assert.match(source, /controlPresentation\(/);
+  assert.doesNotMatch(source, /ackPending/);
   assert.match(stream, /image\.decode\(\)\.then\(decoded, decodeFailed\)/);
 });
