@@ -25,6 +25,7 @@ python -m venv "$server_dir/.venv" || { echo "Could not create the venv; install
 "$server_dir/.venv/bin/python" -m pip --version >/dev/null 2>&1 || { echo "venv pip is missing; install python-pip and python-ensurepip-wheels, then retry." >&2; exit 1; }
 "$server_dir/.venv/bin/python" -m pip install --requirement "$server_dir/requirements.lock"
 "$server_dir/.venv/bin/python" -m pip install --no-deps --no-build-isolation --force-reinstall --editable "$server_dir"
+"$server_dir/.venv/bin/python" "$project_root/scripts/smoke-python-runtime.py"
 (cd "$web_dir" && npm ci && npm run build)
 (cd "$server_dir" && "$server_dir/.venv/bin/python" -m s10_control bootstrap-token >/dev/null)
 

@@ -70,13 +70,35 @@ def _read_proc(name: str) -> str | None:
         return None
 
 
-def _host_addresses() -> list[str]:
+def _route_source_addresses() -> list[str]:
+    """Discover source addresses selected by the kernel without sending data."""
     addresses: list[str] = []
+    targets = (
+        (socket.AF_INET, ("192.0.2.1", 9)),
+        (socket.AF_INET6, ("2001:db8::1", 9, 0, 0)),
+    )
+    for family, target in targets:
+        probe: socket.socket | None = None
+        try:
+            probe = socket.socket(family, socket.SOCK_DGRAM)
+            probe.connect(target)
+            addresses.append(str(probe.getsockname()[0]))
+        except OSError:
+            pass
+        finally:
+            if probe is not None:
+                probe.close()
+    return addresses
+
+
+def discover_host_addresses(observed: list[str] | None = None) -> list[str]:
+    addresses = list(observed or [])
     try:
         for item in socket.getaddrinfo(socket.gethostname(), None, type=socket.SOCK_STREAM):
             addresses.append(item[4][0])
     except OSError:
         pass
+    addresses.extend(_route_source_addresses())
     return sorted(set(addresses))
 
 
@@ -119,6 +141,21 @@ class MetricsService:
         self.settings = settings
         self.adb = adb
         self.started_monotonic = time.monotonic()
+        self._observed_local_addresses: set[str] = set()
+
+    def observe_local_address(self, server: object) -> None:
+        """Remember the concrete local socket address of an incoming request."""
+        if not isinstance(server, (tuple, list)) or not server:
+            return
+        address = server[0]
+        if not isinstance(address, str):
+            return
+        try:
+            parsed = ipaddress.ip_address(address.split("%", 1)[0])
+        except ValueError:
+            return
+        if not parsed.is_unspecified:
+            self._observed_local_addresses.add(str(parsed))
 
     def uptime(self) -> dict[str, Any]:
         proc_value = _read_proc("uptime")
@@ -153,7 +190,7 @@ class MetricsService:
         return {"hostname": socket.gethostname(), "platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "uptime": self.uptime()}
 
     async def network(self) -> dict[str, Any]:
-        addresses = _host_addresses()
+        addresses = discover_host_addresses(sorted(self._observed_local_addresses))
         lan_addresses = classify_addresses(addresses)
         internet = await _port_open(self.settings.internet_probe.host, self.settings.internet_probe.port, self.settings.internet_probe.timeout_seconds)
         ssh = await _port_open("127.0.0.1", self.settings.ssh_probe_port, 0.25)

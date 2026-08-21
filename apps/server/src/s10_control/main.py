@@ -215,7 +215,7 @@ def create_app(
             await adb_monitor.close()
             database.close()
 
-    app = FastAPI(title="S10 Control Server", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="S10 Control Server", version="0.2.1", lifespan=lifespan)
     app.state.settings = resolved
 
     @app.middleware("http")
@@ -223,11 +223,19 @@ def create_app(
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         routed_path = str(request.scope.get("path", ""))
         started = time.monotonic()
-        try:
-            response = await call_next(request)
-        except Exception:
-            LOGGER.exception("request_failed", extra={"request_id": request_id, "path": routed_path})
-            response = JSONResponse({"error": {"code": "INTERNAL", "request_id": request_id}}, status_code=500)
+        metrics.observe_local_address(request.scope.get("server"))
+        if "range" in request.headers:
+            response = JSONResponse(
+                {"error": {"code": "RANGE_NOT_SUPPORTED", "request_id": request_id}},
+                status_code=416,
+            )
+            response.headers["Accept-Ranges"] = "none"
+        else:
+            try:
+                response = await call_next(request)
+            except Exception:
+                LOGGER.exception("request_failed", extra={"request_id": request_id, "path": routed_path})
+                response = JSONResponse({"error": {"code": "INTERNAL", "request_id": request_id}}, status_code=500)
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"

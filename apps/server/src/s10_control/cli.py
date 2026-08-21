@@ -16,6 +16,9 @@ from .database import open_database
 from .main import create_app
 
 
+GRACEFUL_SHUTDOWN_SECONDS = 5
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {"level": record.levelname.lower(), "message": record.getMessage(), "logger": record.name}
@@ -73,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
                 http="h11",
                 ws="wsproto",
                 log_config=None,
+                timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
             )
             return 0
     except ConfigurationError as error:

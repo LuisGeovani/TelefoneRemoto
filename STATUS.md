@@ -1,168 +1,172 @@
 # Estado atual
 
-- **Atualizado em:** 2026-08-15 (America/Rio_Branco)
-- **Branch de trabalho:** `codex/m2-adb-screen-control`
-- **Versão:** `0.2.0`
-- **Milestone:** M2 implementado e testado no host; validação no SM-G975F pendente
-- **Push:** autorizado pelo proprietário para a conclusão desta tarefa
+- **Atualizado em:** 2026-08-20 (America/Rio_Branco)
+- **Branch de trabalho:** `codex/m2.1-hardware-stabilization`
+- **Versão:** `0.2.1`
+- **Milestone:** M2 preservado; reconciliação pós-deploy em andamento
+- **Push:** autorizado explicitamente pelo proprietário para esta tarefa
 
-## Entregue
+## Resultado da estabilização M2.1
 
-O M1 continua funcional: backend FastAPI/SQLite, autenticação, health, métricas,
-Dashboard, LAN, SSH observacional, PWA, scripts Termux e serviço runit não
-dependem de ADB nem de Internet.
+Esta tarefa não adiciona feature. Ela reconcilia o repositório com a evidência
+obtida no Samsung Galaxy S10+ SM-G975F real:
 
-O M2 acrescenta:
+- pins alterados para FastAPI 0.118.3, Pydantic 1.10.26 e Starlette 0.48.0;
+- smoke de versões/import do projeto inserido em instalação e atualização;
+- Uvicorn configurado com shutdown gracioso limitado a cinco segundos;
+- regressão POSIX inicia o servidor real, espera ready, abre WebSocket
+  autenticado, envia SIGTERM e exige saída dentro do limite;
+- telemetria LAN combina endereço observado no socket, hostname e seleção de
+  endereço-fonte por UDP conectado sem transmitir dados, sem `iproute2`, nome
+  de interface ou mutação da rede;
+- requests com `Range` são recusadas antes de `FileResponse`, fechando a
+  superfície alcançável do advisory de ranges da Starlette 0.48.0;
+- ADR 0004 documenta a compatibilidade, as mitigações e os riscos restantes.
 
-- `AdbController` abstrato e adapter por subprocesso com estados `available`,
-  `unavailable`, `unauthorized`, `connecting` e `error`;
-- feature flag ADB desativada por padrão e habilitação somente pela configuração
-  privada revisada no runbook;
-- discovery opt-in por `adb devices -l`/mDNS, preferência de target sem assumir
-  `127.0.0.1:5555` e rediscovery de porta já conectada somente quando o candidato
-  é inequívoco; chamar o cliente pode iniciar o servidor ADB/mDNS local;
-- target explícito em toda operação, modelo fixo `SM-G975F` e fingerprint local
-  obrigatória antes de captura ou input;
-- deadlines, scheduler ADB limitado com prioridade de controle/burst justo,
-  saída limitada, backoff e serialização de subprocessos; somente o
-  processo-cliente criado pelo projeto é encerrado em timeout;
-- `MockAdbController`, `ScreenProvider` e captura PNG por
-  `adb -s TARGET exec-out screencap -p`;
-- rotação medida antes/depois do PNG no mesmo gate e geração monotônica da
-  identidade ADB, inclusive `transport_id`, incorporada ao frame;
-- WebSocket autenticado/same-origin em baixa frequência, uma fila latest-only
-  por cliente, registry por sessão/stream, ACK exato com confirmação do servidor
-  e revalidação periódica de sessão revogada/expirada mesmo sem novos frames;
-- tela remota mobile-first com reconnect, fullscreen, resolução, orientação,
-  aspect ratio, FPS e estados ADB/stream;
-- tap, swipe, long press, HOME, BACK, RECENTS, ENTER, volume, wake, sleep e texto
-  ASCII restrito, sempre tipados e vinculados à sessão, frame, display, rotação,
-  target e geração atuais, com revalidação imediatamente antes do input;
-- CSRF, Origin/Host, papel admin/operator, rate limit, confirmação adicional de
-  sleep e recusa de campos/comandos desconhecidos;
-- service worker v2 com navegação network-first para não reter um `index.html`
-  antigo depois de update;
-- TypeScript 6.0.2 portátil em JavaScript; FastAPI 0.124.4/Starlette 0.50.0,
-  Pydantic 1.10.26 puro, Uvicorn 0.51.0 e wsproto 1.3.2;
-- instalação nova cria o serviço runit desabilitado para revisão e não inicia o
-  listener automaticamente;
-- ADR 0003 e runbook manual seguro para validação no aparelho real.
+Não foram adicionados PowerShare, H.264/scrcpy, terminal, arquivos, package
+manager, Cloudflare, Tailscale ou qualquer outro milestone.
 
-Não existe endpoint de shell, keycode numérico, package ou intent arbitrário. O
-M2 não contém H.264, scrcpy, `screenrecord`, PowerShare, terminal web, túnel,
-package manager ou file manager.
+## Evidência real no SM-G975F
+
+O projeto foi instalado em `~/s10-control` no Termux do SM-G975F, usuário
+`u0_a343`, com SSH existente na porta 8022. Nenhum segredo, token, fingerprint
+ou captura foi registrado no Git.
+
+Validados no aparelho em um deploy real:
+
+| Item | Evidência observada |
+|---|---|
+| Instalação Termux ARM64 | venv, dependências e pacote editável concluíram após ajuste dos pins |
+| Python | `3.14.6` |
+| Stack backend | FastAPI `0.118.3`, Pydantic `1.10.26`, Starlette `0.48.0`; import `s10_control` passou |
+| Frontend | `npm ci`, typecheck e build Vite concluíram; SPA/PWA carregou no navegador |
+| Serviço | termux-services/runit executou `s10-control`; `sshd` permaneceu online |
+| Listener | bind `0.0.0.0:8080` e ready observados |
+| LAN | painel acessado de outro equipamento por `http://192.168.1.20:8080` |
+| Autenticação | bootstrap-token, exchange/login e nova emissão após expiração funcionaram |
+| Dashboard | sistema, CPU, RAM, armazenamento e estados carregaram |
+| Rede | probe de Internet online e probe SSH online |
+| Termux:API | CLI e APK compatíveis instalados; `termux-battery-status` respondeu |
+| Bateria | dados reais apareceram no Dashboard |
+| Tela Remota | página mobile-first e controles carregaram |
+| WebSocket da UI | conexão ao endpoint de tela foi estabelecida |
+
+Essa é uma validação real, mas única. As capacidades acima permanecem na classe
+`probable`, não `guaranteed`, até haver execução repetível sob pré-condições
+registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
+
+## Falhas reais encontradas
+
+1. **Compatibilidade Python:** FastAPI 0.124.4/Pydantic 1.10.26/Starlette
+   0.50.0 falhou no Python 3.14.6 com `ImportError: cannot import name
+   'TypeAdapter' from 'pydantic'`. A combinação agora fixada importou e executou
+   no S10.
+2. **Shutdown:** `sv restart s10-control` fechou o listener após SIGTERM, mas o
+   processo Python permaneceu vivo e o runit mostrou `got TERM`. A correção e a
+   regressão foram implementadas; a pós-condição com PID novo ainda precisa ser
+   repetida no S10 após instalar esta branch.
+3. **Detecção LAN:** o Dashboard mostrou `NO_PRIVATE_ADDRESS_VISIBLE` apesar do
+   acesso real por `192.168.1.20:8080`. A descoberta foi corrigida e testada no
+   host; a nova telemetria ainda precisa ser conferida no S10 após atualização.
+4. **Bateria:** instalar somente o pacote CLI `termux-api` não bastou e o comando
+   aguardou o APK. Depois de instalar o app Termux:API de origem compatível, a
+   coleta funcionou. Ausência do APK continua sendo degradação esperada.
 
 ## Classificação e estado verificável
 
 | Capacidade | Classe | Evidência atual |
 |---|---|---|
-| Core, auth, health e Dashboard sem Internet/ADB | `probable` | testes de host; S10 pendente |
-| Listener e acesso LAN `0.0.0.0:8080` | `probable` | implementação M1; LAN real pendente |
-| ADB no próprio Termux | `experimental` | fake/contrato no host; transporte real pendente |
-| Screenshot PNG por ADB | `experimental` | parser/provider/WebSocket testados com mock |
-| Controle Android vinculado ao frame | `experimental` | coordenadas/rotação/allowlist testadas com mock |
-| Wake/sleep e `adb input text` | `experimental` | execução reportada como `unverified` |
-| H.264/scrcpy e PowerShare | `experimental` | não implementados neste milestone |
+| Core, auth, health, Dashboard e métricas básicas | `probable` | executados uma vez no SM-G975F; repetição/soak pendentes |
+| Listener e acesso LAN `0.0.0.0:8080` | `probable` | acesso real por `192.168.1.20`; teste sem WAN pendente |
+| SSH observacional | `probable` | probe e serviço real online; permanece protegido/read-only |
+| Termux:API e bateria | `probable` | APK+CLI compatíveis responderam no aparelho |
+| Frontend Tela Remota e WebSocket da UI | `probable` | página e conexão validadas; sem frame ADB |
+| ADB no próprio Termux | `experimental` | desabilitado no deploy; transporte real não testado |
+| Screenshot PNG por ADB | `experimental` | somente mock/fixtures no host |
+| Controle Android vinculado ao frame | `experimental` | somente mock/contrato no host |
+| Wake/sleep e `adb input text` | `experimental` | não executados no aparelho |
+| H.264/scrcpy e PowerShare | `experimental` | não implementados |
 | Operações que exigem root/privilégio de sistema | `privileged_required` | permanecem fora do projeto |
 
-Nenhuma capacidade está classificada como `guaranteed`: não houve evidência
-repetível no Samsung Galaxy S10+ SM-G975F real.
+## Não validado no hardware
 
-## Validação executada no host
+- self-ADB/Wireless Debugging dentro do Termux;
+- seleção de target, modelo/fingerprint e mudança de porta reais;
+- screenshot PNG real e comportamento com display físico inoperante;
+- rotação real por `dumpsys input`;
+- tap, swipe, long press, HOME, BACK, RECENTS, ENTER e volume;
+- wake/sleep e texto ASCII;
+- frame-bound control, pós-condições, fullscreen móvel e gestos reais;
+- `sv restart s10-control` depois da correção M2.1;
+- nova detecção LAN depois da correção M2.1;
+- LAN com WAN indisponível, soak e consumo térmico/energético.
 
-- Python 3.12.13: `compileall` passou;
-- backend: 54 testes passaram, incluindo configuração segura, parsers/estados
-  ADB, fingerprint, mudança de porta, timeout/limite de saída, mock, PNG,
-  rotação durante captura, coordenadas, frame stale durante espera, isolamento
-  por sessão/stream, geração/target/transport, backpressure, ACK tardio,
-  revogação WebSocket e durante input, prioridade do gate, CSRF e degradação sem
-  ADB/Internet;
-- os testes de ADB usam runner/provider falso ou subprocesso Python controlado;
-  nenhum comando chamou um ADB real;
-- frontend com Node 22.20.0/npm 10.9.3 e TypeScript 6.0.2: `npm test`
-  (typecheck) e `npm run build` passaram; build Vite gerou 21 módulos e assets
-  locais;
-- o lock atualizado instalou sem requisitos quebrados; Pydantic 1.10.26 e
-  wsproto 1.3.2 são wheels puros, e os protocolos Uvicorn foram fixados em
-  `asyncio`/`h11`/`wsproto`;
-- instalação editável em venv limpa passou, `s10-control version` retornou
-  `0.2.0` e os assets compilados foram resolvidos a partir do repositório;
-- smoke Uvicorn real em `0.0.0.0:8080` passou para ready, SPA e handshake
-  WebSocket autenticado; com ADB desativado o stream reportou `unavailable` sem
-  afetar ready;
-- smoke visual em viewport móvel carregou a SPA, CSS, PWA e tela de login sem
-  overflow ou erros no console; o painel autenticado continua coberto por API/
-  WebSocket e aguarda navegador móvel real;
-- nenhum reboot, reset, alteração de Wi-Fi/SSH/ADB, captura real ou ação Android
-  foi executado.
+ADB permaneceu `enabled: false`; não foram executados `adb pair`, `connect`,
+`disconnect`, `kill-server`, `tcpip`, `root`, `unroot`, reboot ou revogação.
+Wi-Fi e SSH não foram alterados.
 
-## VEX temporária: Starlette 0.50.0
+## Validação no host desta branch
 
-O scanner sinaliza `GHSA-86qp-5c8j-p5mr`, `GHSA-wqp7-x3pw-xc5r`,
-`GHSA-x746-7m8f-x49c`, `GHSA-jp82-jpqv-5vv3` e
-`GHSA-82w8-qh3p-5jfq`, publicadas em 2026, mas os caminhos afetados não são
-alcançáveis nesta configuração: o projeto não usa
-`request.url`, `request.form()`, `StaticFiles` nem `HTTPEndpoint`; o middleware
-decide cache pelo `scope["path"]`; e o runtime-alvo é Android/Termux, não Windows
-UNC. Um teste envia `Host` malformado e comprova que ready continua roteado e
-com `Cache-Control: no-store`.
+- ambiente de teste: Python 3.12.13 com os pins exatos do runtime;
+- backend: 59 testes passaram e 1 regressão POSIX de SIGTERM foi pulada no
+  Windows; a suíte inclui import em subprocesso, versões, LAN por socket/rota,
+  `Range` recusado, timeout de shutdown, ADB degradado e todos os contratos M2;
+- a regressão SIGTERM fica habilitada automaticamente em Linux/Termux e mantém
+  um WebSocket autenticado aberto durante o sinal;
+- frontend 0.2.1: `npm test` (typecheck) e `npm run build` passaram; Vite gerou
+  21 módulos e assets locais;
+- `compileall` de source, testes e smoke passou;
+- `pip check` reportou `No broken requirements found`;
+- `smoke-python-runtime.py` importou o projeto em subprocesso e confirmou os
+  três pins;
+- processo Uvicorn real iniciou em `0.0.0.0:8080`; ready e SPA responderam 200.
+  O harness Windows não entregou Ctrl+C ao filho e fez cleanup pelo PID exato,
+  portanto isso não conta como teste de shutdown;
+- `bash -n` passou para install, update e serviço runit. A revisão confirmou
+  que instalação/atualização executam o smoke antes do bootstrap/build, não
+  iniciam automaticamente serviço novo e não reiniciam aparelho, rede, ADB ou
+  SSH;
+- nenhuma chamada tocou ADB, Wi-Fi, SSH ou o aparelho real.
 
-Esta é uma declaração de não alcançabilidade, não uma afirmação de que a versão
-está corrigida. Qualquer uso futuro dessas APIs ou deploy no Windows invalida a
-VEX. A correção upstream completa exige Starlette 1.3.1; a linha atual do
-FastAPI que a suporta exige Pydantic 2/pydantic-core nativo, proibido até haver
-prova no S10 Termux. Reavaliar a pilha imediatamente após essa prova de
-compatibilidade.
+## VEX estreita: Starlette 0.48.0
 
-## Ainda não validado no S10 real
+Starlette 0.48.0 permanece afetada por advisories e não é chamada de corrigida:
 
-- instalação/lock Python e build Vite no Termux aarch64/Bionic;
-- bind e uso pela LAN com Internet indisponível;
-- `android-tools`, self-ADB/Wireless Debugging e mudança de porta após boot;
-- modelo/fingerprint reais, autorização já existente e comportamento do
-  firmware Android 12/One UI;
-- PNG real, parsing de `dumpsys input`, orientação, fullscreen móvel e gesto;
-- consumo de CPU/RAM/bateria/temperatura entre 0,2 e 2 FPS e soak de 30 minutos;
-- HOME/BACK/RECENTS/ENTER/volume/wake/sleep, texto ASCII e pós-condições;
-- tela lógica com painel físico apagado, DeX/multi-display, keyguard, DRM e
-  janelas `FLAG_SECURE`.
+| Advisory | Superfície nesta aplicação |
+|---|---|
+| `GHSA-7f5h-v6xp-fcq8` | `FileResponse` existe, mas todo `Range` é recusado no middleware antes do roteamento; teste negativo obrigatório |
+| `GHSA-86qp-5c8j-p5mr` | não há decisão baseada em `request.url`; path de cache/log vem de `scope["path"]` |
+| `GHSA-wqp7-x3pw-xc5r` | afeta `StaticFiles` no Windows; runtime é Termux/POSIX e não há `StaticFiles` |
+| `GHSA-x746-7m8f-x49c` | não há `HTTPEndpoint` |
+| `GHSA-jp82-jpqv-5vv3` | não há uso de `request.url`/hostname |
+| `GHSA-82w8-qh3p-5jfq` | não há `request.form()` nem parser multipart |
 
-## Limitações e riscos
+A análise completa e links oficiais estão no ADR 0004. Qualquer introdução de
+Range, `request.url`, forms, `StaticFiles`, `HTTPEndpoint` ou deploy Windows
+invalida a VEX. Scanners devem continuar sinalizando a dependência até uma pilha
+upstream corrigida ser comprovada no Termux ARM64.
 
-1. Self-ADB é experimental: autorização inicial pode exigir DeX/HDMI e a porta
-   Wireless Debugging pode mudar; conectar/parear continua sendo ação manual.
-   Mesmo probes `devices`/mDNS podem iniciar o servidor ADB local e tentar
-   reconectar peers já pareados, por isso o provider é opt-in.
-2. Fingerprint muda após update de firmware e deve ser conferida e recadastrada
-   manualmente; divergência falha fechada.
-3. PNG por subprocesso é uma sequência de screenshots, não vídeo: pode ter
-   latência, tráfego, custo térmico e energético relevantes.
-4. Se a rotação não puder ser lida, a imagem continua visível, mas todo controle
-   fica bloqueado.
-5. `FLAG_SECURE`, DRM, keyguard ou tela lógica apagada podem produzir imagem
-   preta; o projeto não tenta bypass.
-6. Somente display 0 foi modelado. DeX/multi-display não foi validado.
-7. Texto está limitado a `[A-Za-z0-9 .,@_+-]`; Unicode/IME Samsung permanece
-   experimental.
-8. Exit code zero do input não comprova mudança da UI; respostas são
-   `unverified` até existir pós-condição observável.
-9. HTTP na LAN não oferece confidencialidade; não publicar `:8080` por WAN ou
-   túnel nesta etapa.
-10. O frontend passou typecheck/build, mas não teste DOM/visual automatizado nem
-    navegador móvel real; a portabilidade do build TypeScript 6 no S10 ainda
-    precisa ser comprovada.
-11. O stack Python anuncia Python 3.14 e evita wheels nativos, mas a instalação
-    real depende de `python-pip`/`python-ensurepip-wheels` do Termux e permanece
-    não validada no aparelho.
-12. Starlette 0.50.0 permanece em versão afetada por advisories recentes; a VEX
-    acima depende do conjunto atual de APIs, do runtime Termux e dos testes de
-    Host/path. Scanner deve continuar reportando até uma atualização compatível.
+## Riscos remanescentes
+
+1. Pydantic 1 não tem suporte upstream para Python 3.14, embora 1.10.26 tenha
+   funcionado neste aparelho; uma atualização futura do Python Termux pode
+   quebrar o runtime.
+2. Starlette 0.48.0 está em ranges vulneráveis; as mitigações dependem da
+   superfície permanecer estreita e devem ser reavaliadas em qualquer mudança.
+3. O prazo do Uvicorn impede espera infinita, mas pode cancelar requests/WS em
+   andamento após cinco segundos; isso é preferível a prender o runit.
+4. O IP observado só aparece depois de uma request pela interface correspondente;
+   antes disso, os fallbacks dependem das rotas que o kernel expõe ao Termux.
+5. Self-ADB, PNG e input continuam totalmente não validados no hardware.
+6. HTTP LAN não oferece confidencialidade e `:8080` não deve ser publicado por
+   WAN ou túnel.
+7. Android/One UI ainda pode matar Termux e `sshd`; runit não garante uptime do
+   app Android.
 
 ## Próximo passo seguro
 
-Não implementar outro milestone. Com o proprietário presente, SSH confirmado
-de outro equipamento e rota visual DeX/HDMI disponível, executar somente o
-[`runbook ADB/PNG/controle`](docs/operations/adb-screen-control-safe.md). Registrar
-firmware, versões, estados e medições sanitizadas aqui. Qualquer correção deve
-ficar restrita à compatibilidade do M2; H.264/scrcpy e novos recursos continuam
-fora do escopo até nova autorização.
+Instalar esta branch no S10 sem alterar ADB, manter SSH aberto e repetir somente
+o smoke Python, a suíte, `sv restart s10-control` com WebSocket ativo e a
+telemetria LAN conforme `PLAN.md`/runbook. Registrar PID anterior/novo, tempo de
+restart, ready e endereço sanitizado. Não avançar para ADB real, PowerShare,
+H.264 ou outro milestone sem nova autorização.

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s10-control"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local-first control dashboard for a Samsung Galaxy S10+ running Termux"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi==0.124.4",
+  "fastapi==0.118.3",
   "pydantic==1.10.26",
-  "starlette==0.50.0",
+  "starlette==0.48.0",
   "uvicorn==0.51.0",
   "wsproto==1.3.2",
 ]

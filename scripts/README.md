@@ -8,4 +8,6 @@ sempre read-only.
 Uma instalação nova cria o serviço com arquivo `down`; ela não chama
 `sv-enable` nem abre `0.0.0.0:8080` antes da revisão manual. O script valida
 Python 3.11+, pip dentro da venv e o requisito de Node do Vite. Atualizações não
-reiniciam o serviço existente.
+reiniciam o serviço existente. Instalação e atualização executam
+`smoke-python-runtime.py` depois do install editável e falham antes do bootstrap
+ou build se versões/imports não corresponderem ao stack provado no S10.

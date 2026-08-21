@@ -4,6 +4,32 @@ Este roteiro valida o Milestone 2 no **Samsung Galaxy S10+ SM-G975F** real. Ele
 não concede autorização ao backend para preparar ou reparar ADB. Pareamento,
 `adb connect` e edição da configuração são passos manuais do proprietário.
 
+Antes deste roteiro, instale e valide a estabilização M2.1. O primeiro deploy
+real comprovou Python 3.14.6/FastAPI 0.118.3/Pydantic 1.10.26/Starlette 0.48.0,
+mas também encontrou um shutdown preso e telemetria LAN incompleta. Execute:
+
+```sh
+cd "$HOME/s10-control"
+apps/server/.venv/bin/python scripts/smoke-python-runtime.py
+apps/server/.venv/bin/python -m unittest discover -s apps/server/tests -v
+```
+
+Com uma sessão SSH de recuperação mantida aberta e a Tela Remota conectada em
+outro equipamento, valide somente o lifecycle do projeto:
+
+```sh
+sv status sshd
+timeout 10s sv restart s10-control
+sv status s10-control
+curl --fail --max-time 2 http://127.0.0.1:8080/api/v1/health/ready
+sv status sshd
+```
+
+O `timeout` limita apenas o cliente `sv`; ele não mata serviços. Se o restart
+não concluir, pare a validação e preserve a sessão SSH. Nunca aplique o comando
+a `sshd`. Confirme também que o Dashboard acessado pela LAN mostra o endereço
+privado usado pelo navegador. ADB continua desabilitado durante esta etapa.
+
 ## 1. Pare imediatamente se
 
 - SSH não estiver acessível a partir de um segundo equipamento;

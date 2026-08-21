@@ -67,7 +67,8 @@ runtime; o inventário é gate obrigatório antes de validar M1 no aparelho.
 
 ## Milestone 1 — painel local funcional
 
-**Estado:** implementado e testado no host; validação no SM-G975F pendente.
+**Estado:** implementado; caminho principal validado no SM-G975F em 2026-08-20.
+O teste de LAN sem WAN e as medições de soak continuam pendentes.
 
 ### Escopo exato
 
@@ -124,7 +125,9 @@ Sem reboot. O teste de Termux:Boot não pertence ao M1.
 
 ## Milestone 2 — ADB, tela PNG e controle Android (etapa autorizada)
 
-**Estado:** implementado e testado no host; validação no SM-G975F pendente.
+**Estado:** implementado e testado no host. Frontend e WebSocket da UI foram
+validados no SM-G975F; self-ADB, PNG e controles Android reais permanecem
+pendentes e experimentais.
 
 O M2 combina o gateway ADB, o ScreenProvider PNG e o AndroidController porque
 controle por coordenadas não pode existir sem referência visual atual. O
@@ -211,6 +214,37 @@ faz a primeira autorização.
 11. restaurar somente config/serviço do projeto e reconfirmar SSH.
 
 **Versão sugerida:** `v0.2.0-experimental` até o runbook passar no SM-G975F.
+
+## Estabilização M2.1 — reconciliação com hardware (autorizada)
+
+**Estado:** implementada nesta branch; não adiciona funcionalidade nem abre um
+novo milestone.
+
+### Escopo exato
+
+1. reconciliar o lock com Python 3.14.6, FastAPI 0.118.3, Pydantic 1.10.26 e
+   Starlette 0.48.0, combinação comprovada no SM-G975F;
+2. executar smoke de import/versões em instalação e atualização;
+3. limitar o shutdown gracioso do Uvicorn e testar SIGTERM com servidor real e
+   WebSocket ativo em ambiente POSIX;
+4. descobrir endereço LAN sem depender de `iproute2` ou nome de interface;
+5. documentar com precisão a VEX de Starlette 0.48.0 e rejeitar byte ranges
+   antes de `FileResponse`;
+6. registrar a evidência real do deploy sem promover ADB/controle não testados.
+
+**Versão:** `0.2.1`.
+
+### Validação segura no S10 após instalar a branch
+
+1. manter uma sessão SSH aberta de outro equipamento e confirmar uma segunda
+   conexão SSH; não reiniciar nem reconfigurar `sshd`;
+2. executar `apps/server/.venv/bin/python scripts/smoke-python-runtime.py` e a
+   suíte backend; confirmar Python 3.14.6 e as três versões fixadas;
+3. abrir Dashboard e Tela Remota pela LAN, mantendo o WebSocket conectado;
+4. executar manualmente `sv restart s10-control`, exigir término em até dez
+   segundos, PID novo, ready local e novo acesso LAN;
+5. confirmar que o Dashboard mostra o IP privado usado pelo cliente LAN;
+6. reconfirmar SSH. Não habilitar nem alterar ADB durante esta validação.
 
 ## Milestone 3 — observabilidade local avançada (planejado, não autorizado)
 
@@ -418,6 +452,7 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 - M1: commit funcional preservado em `codex/m1-local-dashboard`;
 - M2: trabalho isolado em `codex/m2-adb-screen-control`, sem misturar H.264 ou
   milestones futuros;
+- M2.1: estabilização isolada em `codex/m2.1-hardware-stabilization`;
 - Conventional Commits e mudanças de estado no mesmo commit relevante;
 - lockfiles obrigatórios a partir de M1;
 - ADRs numerados e imutáveis por decisão relevante;
@@ -426,9 +461,9 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 
 ## Instrução exata ao próximo agente
 
-Leia os documentos raiz, o ADR 0003 e o runbook ADB. **Não implemente outro
-milestone.** Valide o M2 no SM-G975F com o proprietário presente, SSH confirmado
-e rota visual segura. Faça somente correções de compatibilidade encontradas pelo
-runbook, repita os testes e registre evidência sanitizada em `STATUS.md`. Não
-adicione H.264, scrcpy, `screenrecord`, pairing/connect automático,
-shell/intent/package arbitrário ou feature futura sem nova autorização.
+Leia os documentos raiz, ADRs 0003/0004 e o runbook. **Não implemente outro
+milestone.** Primeiro instale a estabilização M2.1 e repita no SM-G975F o smoke
+Python, `sv restart` com WebSocket ativo e a descoberta LAN, preservando SSH,
+Wi-Fi e ADB. Só depois, com autorização separada e rota visual segura, prossiga
+ao runbook ADB/PNG/controle. Não adicione H.264, scrcpy, PowerShare,
+pairing/connect automático, shell/intent/package arbitrário ou feature futura.

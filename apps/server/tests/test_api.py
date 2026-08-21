@@ -78,6 +78,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(malformed_host.status_code, 200)
                         self.assertEqual(malformed_host.headers["Cache-Control"], "no-store")
                         self.assertFalse(malformed_host.json()["internet_required"])
+                        ranged = await client.get(
+                            "/api/v1/health/ready",
+                            headers={"Range": "bytes=0-1,3-4"},
+                        )
+                        self.assertEqual(ranged.status_code, 416)
+                        self.assertEqual(ranged.json()["error"]["code"], "RANGE_NOT_SUPPORTED")
+                        self.assertEqual(ranged.headers["Accept-Ranges"], "none")
                         self.assertEqual((await client.get("/api/v1/status")).status_code, 401)
                         token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
                         exchanged = await client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})

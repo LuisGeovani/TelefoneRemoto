@@ -1,7 +1,7 @@
 # Arquitetura do S10 Control Server
 
-- **Status:** M2 autorizado; runtime pelo ADR 0002 e slice ADB/PNG/controle pelo
-  ADR 0003
+- **Status:** M2 estabilizado após deploy real; runtime pelo ADR 0002, slice
+  ADB/PNG/controle pelo ADR 0003 e compatibilidade M2.1 pelo ADR 0004
 - **Estilo:** monólito modular, hexagonal/ports-and-adapters, local-first
 
 ## 1. Decisão principal
@@ -419,6 +419,11 @@ Somente leitura: interfaces/IPs visíveis, rota default quando acessível,
 listeners do próprio UID e probes de LAN/WAN. Não existe método de mutação.
 mDNS é um adapter opcional; IP:porta é sempre apresentado.
 
+No runtime Python, o endereço LAN combina o endereço local concreto observado
+no socket de uma request, `getaddrinfo(gethostname())` e seleção de endereço de
+origem por socket UDP conectado sem enviar dados. Nenhuma fonte depende de nome
+de interface, `wlan0` ou `iproute2`, e nenhuma delas altera a rede.
+
 ### 7.9 Acesso remoto
 
 ```go
@@ -628,7 +633,7 @@ Prioridade de sobrevivência: autenticação/health > LAN/API > auditoria > mét
 
 - Termux: `python` 3.11+, `nodejs-lts` e `termux-services`; a instalação é
   manual e revisável, sem tocar em `sshd`.
-- Backend: FastAPI 0.124.4, Starlette 0.50.0, Pydantic 1.10.26 (wheel puro),
+- Backend: FastAPI 0.118.3, Starlette 0.48.0, Pydantic 1.10.26,
   Uvicorn 0.51.0, wsproto 1.3.2 e `sqlite3` da
   biblioteca padrão; sem ORM, CGO ou extensão nativa obrigatória.
 - Frontend: React, ReactDOM, compilador JavaScript TypeScript 6.0.2, Vite e tipos fixados em
@@ -663,10 +668,14 @@ qualquer classe `guaranteed`.
 ### 12.3 Backend Python
 
 - dependências fixadas em `apps/server/requirements.lock`;
+- smoke de import/versões executado após instalar o backend; no SM-G975F a
+  combinação foi comprovada com Python 3.14.6;
 - subprocessos somente por `asyncio.create_subprocess_exec`, nunca shell;
 - PNG validado com biblioteca padrão (`struct`), sem Pillow/codec nativo;
 - WebSocket fornecido por FastAPI/Uvicorn com loop `asyncio`, HTTP `h11` e
   `wsproto` puro Python explicitamente fixados;
+- shutdown gracioso do Uvicorn limitado a cinco segundos para que conexão
+  persistente não prenda o runit indefinidamente;
 - fakes de ADB/screen/control executam em host sem telefone.
 
 ### 12.4 Frontend
