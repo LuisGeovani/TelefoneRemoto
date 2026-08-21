@@ -189,8 +189,9 @@ runbook obrigatório é
 ### Testes no S10 real
 
 Pré-condições: proprietário presente, SSH confirmado de outro equipamento,
-rota DeX/HDMI funcional e ADB já autorizado/pareado manualmente. O backend não
-faz a primeira autorização.
+rota visual funcional (DeX/HDMI ou scrcpy USB já autorizado nas condições do
+runbook) e ADB já autorizado/pareado manualmente. O backend não faz a primeira
+autorização.
 
 1. executar o inventário opt-in, reconhecendo que `adb devices -l` pode iniciar
    servidor/mDNS local, e registrar firmware/Termux sem segredos;
@@ -213,12 +214,14 @@ faz a primeira autorização.
     latência e gaps sem declarar SLA;
 11. restaurar somente config/serviço do projeto e reconfirmar SSH.
 
-**Versão sugerida:** `v0.2.0-experimental` até o runbook passar no SM-G975F.
+**Versões:** o M2 funcional foi entregue como `0.2.0` e estabilizado como
+`0.2.1`. Self-ADB, PNG e controle permanecem experimentais até o runbook passar
+no SM-G975F.
 
 ## Estabilização M2.1 — reconciliação com hardware (autorizada)
 
-**Estado:** implementada nesta branch; não adiciona funcionalidade nem abre um
-novo milestone.
+**Estado:** implementada e validada no SM-G975F real; não adiciona
+funcionalidade nem abre um novo milestone.
 
 ### Escopo exato
 
@@ -235,6 +238,12 @@ novo milestone.
 **Versão:** `0.2.1`.
 
 ### Validação segura no S10 após instalar a branch
+
+**Resultado em hardware:** aprovada. `update-termux.sh`, versão `0.2.1` e smoke
+passaram; `sv restart s10-control` substituiu o PID `8132` por `15504`, ready e
+`:8080` voltaram, Dashboard/WebSocket funcionaram após o restart, duas sessões
+SSH foram preservadas e a LAN real foi reportada em `192.168.1.13`. ADB
+permaneceu desabilitado.
 
 1. manter uma sessão SSH aberta de outro equipamento e confirmar uma segunda
    conexão SSH; não reiniciar nem reconfigurar `sshd`;
@@ -462,8 +471,9 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 ## Instrução exata ao próximo agente
 
 Leia os documentos raiz, ADRs 0003/0004 e o runbook. **Não implemente outro
-milestone.** Primeiro instale a estabilização M2.1 e repita no SM-G975F o smoke
-Python, `sv restart` com WebSocket ativo e a descoberta LAN, preservando SSH,
-Wi-Fi e ADB. Só depois, com autorização separada e rota visual segura, prossiga
-ao runbook ADB/PNG/controle. Não adicione H.264, scrcpy, PowerShare,
-pairing/connect automático, shell/intent/package arbitrário ou feature futura.
+milestone.** M2.1 foi validada no SM-G975F. O próximo trabalho operacional,
+somente com autorização separada e rota visual segura, é validar self-ADB,
+PNG e controles reais do M2 pelo runbook. O próximo milestone novo planejado é
+M3 (observabilidade local avançada), ainda não autorizado. Não adicione H.264,
+scrcpy, PowerShare, pairing/connect automático, shell/intent/package arbitrário
+ou feature futura.

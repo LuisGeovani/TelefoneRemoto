@@ -3,8 +3,10 @@
 Servidor de controle **local-first** para um Samsung Galaxy S10+ SM-G975F,
 executado no Termux, sem root e com o display físico inoperante.
 
-O projeto está no **Milestone 2**, implementado no host e ainda pendente de
-validação no S10 real. O backend é Python/FastAPI com SQLite e a interface é
+O projeto está no **Milestone 2**. A estabilização M2.1 `0.2.1` foi validada no
+SM-G975F real (runtime Termux, restart gracioso, recuperação do painel/WebSocket,
+preservação do SSH e telemetria LAN); self-ADB, PNG e controles Android reais
+continuam pendentes. O backend é Python/FastAPI com SQLite e a interface é
 React/TypeScript/Vite, compilada para assets locais e entregue pelo próprio
 backend. A base de trabalho é:
 

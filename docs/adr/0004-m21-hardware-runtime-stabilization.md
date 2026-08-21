@@ -70,9 +70,25 @@ reportando a versão; não há supressão global.
 - O runtime passa a refletir a combinação realmente executada no hardware, mas
   Pydantic 1 em Python 3.14 continua fora do suporte upstream e é risco técnico.
 - A saída por SIGTERM torna-se limitada mesmo com conexão persistente, evitando
-  espera infinita do runit. A pós-condição `sv restart` com PID novo ainda deve
-  ser repetida no S10 após instalar esta mudança.
+  espera infinita do runit. À data desta decisão, a pós-condição `sv restart`
+  com PID novo ainda precisava ser repetida no S10; o resultado posterior está
+  registrado no addendum abaixo.
 - A telemetria aprende o IP usado por uma conexão LAN real e conserva fallbacks
   portáveis quando ainda não houve conexão remota.
 - Migrar para Pydantic 2/Starlette corrigida requer uma prova separada no
   Termux ARM64 e não pertence a esta estabilização.
+
+## Addendum de validação no hardware — 2026-08-20
+
+A pendência operacional descrita acima foi encerrada no Samsung Galaxy S10+
+SM-G975F real. Com a versão `0.2.1`, `update-termux.sh` e o smoke do runtime
+passaram; `sv restart s10-control` encerrou o PID `8132` e o runit iniciou o PID
+`15504`. Readiness, Dashboard em `192.168.1.13:8080` e WebSocket funcionaram
+após o restart, enquanto `sshd` e uma segunda sessão SSH permaneceram
+operacionais.
+A telemetria LAN passou a apresentar o endereço privado real. ADB permaneceu
+desabilitado.
+
+Este addendum registra evidência e não altera a decisão arquitetural nem promove
+self-ADB, screenshot PNG ou controle Android, que continuam sem validação no
+firmware real.
