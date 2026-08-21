@@ -13,7 +13,7 @@ from typing import Any
 
 DEFAULT_CONFIG = {
     "listen": {"host": "0.0.0.0", "port": 8080},
-    "session_ttl_hours": 24,
+    "auth": {"session_ttl_hours": 24 * 30, "cookie_secure": False},
     "internet_probe": {"host": "1.1.1.1", "port": 53, "timeout_seconds": 1.0},
     "ssh_probe_port": 8022,
     "adb": {
@@ -62,6 +62,7 @@ class Settings:
     host: str
     port: int
     session_ttl_hours: int
+    cookie_secure: bool
     internet_probe: ProbeConfig
     ssh_probe_port: int
     adb: AdbConfig
@@ -152,6 +153,7 @@ def load_settings(data_dir: Path | None = None) -> Settings:
     probe = _expect_mapping(raw.get("internet_probe"), "internet_probe")
     adb = _expect_mapping(raw.get("adb", DEFAULT_CONFIG["adb"]), "adb")
     screen = _expect_mapping(raw.get("screen", DEFAULT_CONFIG["screen"]), "screen")
+    auth = _expect_mapping(raw.get("auth", DEFAULT_CONFIG["auth"]), "auth")
     host = listen.get("host")
     if not isinstance(host, str) or not host:
         raise ConfigurationError("listen.host must be a non-empty string")
@@ -164,6 +166,9 @@ def load_settings(data_dir: Path | None = None) -> Settings:
     adb_enabled = adb.get("enabled")
     if not isinstance(adb_enabled, bool):
         raise ConfigurationError("adb.enabled must be a boolean")
+    cookie_secure = auth.get("cookie_secure", False)
+    if not isinstance(cookie_secure, bool):
+        raise ConfigurationError("auth.cookie_secure must be a boolean")
     return Settings(
         data_dir=root,
         config_path=config_path,
@@ -171,7 +176,8 @@ def load_settings(data_dir: Path | None = None) -> Settings:
         bootstrap_path=root / "bootstrap.token",
         host=host,
         port=_positive_int(listen.get("port"), "listen.port"),
-        session_ttl_hours=_positive_int(raw.get("session_ttl_hours"), "session_ttl_hours", 24 * 31),
+        session_ttl_hours=_positive_int(auth.get("session_ttl_hours", 24 * 30), "auth.session_ttl_hours", 24 * 365),
+        cookie_secure=cookie_secure,
         internet_probe=ProbeConfig(probe_host, _positive_int(probe.get("port"), "internet_probe.port"), float(timeout)),
         ssh_probe_port=_positive_int(raw.get("ssh_probe_port"), "ssh_probe_port"),
         adb=AdbConfig(

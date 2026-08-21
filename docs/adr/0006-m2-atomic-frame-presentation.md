@@ -45,3 +45,11 @@ permanece visível entre atualizações, o portrait 720 × 1520 permanece inteir
 os controles continuam funcionais. Um flicker separado no texto auxiliar do
 painel foi observado; ele não altera este protocolo e é tratado como correção de
 apresentação de status, ainda pendente de reteste.
+
+## Addendum de fechamento do M2 — 2026-08-20
+
+No commit `38e0963`, o proprietário confirmou no mesmo SM-G975F que o texto
+auxiliar também deixou de piscar, os controles continuaram utilizáveis entre
+frames e HOME/BACK/RECENTS/tap/swipe/long press funcionaram. A pendência descrita
+no addendum anterior está encerrada; capacidades não exercitadas continuam com
+o estado registrado em `STATUS.md`.

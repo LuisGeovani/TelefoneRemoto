@@ -171,6 +171,29 @@ input {
   text-align: right;
 }
 
+.identity > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.logout-button,
+.auth-link {
+  border: 1px solid #40557f;
+  background: #17243e;
+  color: #dbeafe;
+}
+
+.logout-button {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.auth-link {
+  margin-top: 12px;
+}
+
 .section-heading {
   display: flex;
   justify-content: space-between;

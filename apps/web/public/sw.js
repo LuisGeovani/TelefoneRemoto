@@ -1,4 +1,4 @@
-const CACHE = "s10-control-shell-v2";
+const CACHE = "s10-control-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => event.waitUntil(

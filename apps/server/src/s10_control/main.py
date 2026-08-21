@@ -12,6 +12,7 @@ import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, AsyncIterator, Literal
 from urllib.parse import urlsplit
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field, StrictBool, constr, validator
 
 from .adb import AdbController, AdbMonitor, SubprocessAdbController
 from .android_control import AndroidControlService, ControlError, FrameReference
-from .auth import AuthService, Principal, SESSION_COOKIE
+from .auth import AuthError, AuthService, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, Principal, SESSION_COOKIE
 from .config import ConfigurationError, Settings, load_settings
 from .database import open_database
 from .metrics import MetricsService
@@ -33,6 +34,9 @@ Identifier = constr(strict=True, min_length=1, max_length=80, regex=r"^[A-Za-z0-
 SafeText = constr(strict=True, min_length=1, max_length=200, regex=r"^[A-Za-z0-9 .,@_+\-]+$")
 AdbTarget = constr(strict=True, min_length=1, max_length=200, regex=r"^[A-Za-z0-9._:\[\]%-]+$")
 BootstrapToken = constr(strict=True, min_length=20, max_length=256)
+Username = constr(strict=True, min_length=1, max_length=64, regex=r"^[A-Za-z0-9._-]+$")
+Password = constr(strict=True, min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+LoginText = constr(strict=True, min_length=0, max_length=MAX_PASSWORD_LENGTH)
 
 
 class StrictModel(BaseModel):
@@ -40,8 +44,22 @@ class StrictModel(BaseModel):
         extra = "forbid"
 
 
-class BootstrapExchange(StrictModel):
+class SetupRequest(StrictModel):
     token: BootstrapToken
+    username: Username
+    password: Password
+    password_confirmation: Password
+
+
+class LoginRequest(StrictModel):
+    username: LoginText
+    password: LoginText
+
+
+class RecoveryRequest(StrictModel):
+    token: BootstrapToken
+    password: Password
+    password_confirmation: Password
 
 
 class FrameRequest(StrictModel):
@@ -147,6 +165,33 @@ class ActionRateLimiter:
             return True
 
 
+class LoginRateLimiter:
+    def __init__(self, maximum: int = 5, window_seconds: float = 60.0, max_keys: int = 256):
+        self.maximum = maximum
+        self.window_seconds = window_seconds
+        self.max_keys = max_keys
+        self._failures: dict[str, deque[float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def claim(self, key: str) -> bool:
+        async with self._lock:
+            now = time.monotonic()
+            failures = self._failures.get(key)
+            if failures is not None:
+                while failures and now - failures[0] > self.window_seconds:
+                    failures.popleft()
+                if len(failures) >= self.maximum:
+                    return False
+            elif len(self._failures) >= self.max_keys:
+                self._failures.pop(next(iter(self._failures)))
+            self._failures.setdefault(key, deque()).append(now)
+            return True
+
+    async def succeeded(self, key: str) -> None:
+        async with self._lock:
+            self._failures.pop(key, None)
+
+
 def _same_origin(origin: str | None, host: str | None) -> bool:
     if not origin or not host:
         return False
@@ -193,12 +238,13 @@ def create_app(
     adb_monitor = AdbMonitor(adb)
     metrics = MetricsService(resolved, adb)
     limiter = ActionRateLimiter()
+    login_limiter = LoginRateLimiter()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         database = open_database(resolved.database_path)
         auth = AuthService(database, resolved)
-        bootstrap_created = auth.ensure_bootstrap()
+        bootstrap_created = auth.ensure_bootstrap() if not auth.has_account() else None
         app.state.database = database
         app.state.auth = auth
         app.state.metrics = metrics
@@ -215,7 +261,7 @@ def create_app(
             await adb_monitor.close()
             database.close()
 
-    app = FastAPI(title="S10 Control Server", version="0.2.1", lifespan=lifespan)
+    app = FastAPI(title="S10 Control Server", version="0.2.2", lifespan=lifespan)
     app.state.settings = resolved
 
     @app.middleware("http")
@@ -282,19 +328,40 @@ def create_app(
             raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED"})
         return principal
 
-    async def control_principal(request: Request, principal: Principal = Depends(current_principal)) -> Principal:
-        if principal.role not in {"operator", "admin"}:
-            raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+    async def csrf_principal(request: Request, principal: Principal = Depends(current_principal)) -> Principal:
         if not hmac.compare_digest(request.headers.get("X-CSRF-Token", ""), principal.csrf_token):
             raise HTTPException(status_code=403, detail={"code": "CSRF_REJECTED"})
         if not _same_origin(request.headers.get("Origin"), request.headers.get("Host")):
             raise HTTPException(status_code=403, detail={"code": "ORIGIN_REJECTED"})
+        return principal
+
+    async def control_principal(request: Request, principal: Principal = Depends(csrf_principal)) -> Principal:
+        if principal.role != "admin":
+            raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
         if not await limiter.allow(principal):
             raise ControlError("RATE_LIMITED")
         return principal
 
     def set_session_cookie(response: Response, principal: Principal) -> None:
-        response.set_cookie(SESSION_COOKIE, principal.session_id, httponly=True, secure=False, samesite="strict", max_age=resolved.session_ttl_hours * 3600, path="/")
+        ttl_seconds = resolved.session_ttl_hours * 3600
+        response.set_cookie(
+            SESSION_COOKIE,
+            principal.session_id,
+            httponly=True,
+            secure=resolved.cookie_secure,
+            samesite="strict",
+            max_age=ttl_seconds,
+            expires=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
+            path="/",
+        )
+
+    def require_same_origin(request: Request) -> None:
+        if not _same_origin(request.headers.get("Origin"), request.headers.get("Host")):
+            raise HTTPException(status_code=403, detail={"code": "ORIGIN_REJECTED"})
+
+    def auth_failure(error: AuthError) -> HTTPException:
+        status = 409 if error.code in {"ACCOUNT_ALREADY_CONFIGURED", "ACCOUNT_NOT_CONFIGURED"} else 401 if error.code == "INVALID_BOOTSTRAP" else 400
+        return HTTPException(status_code=status, detail={"code": error.code})
 
     @app.get("/api/v1/health/live")
     async def live() -> dict[str, str]:
@@ -305,23 +372,63 @@ def create_app(
         request.app.state.database.execute("SELECT 1").fetchone()
         return {"state": "ready", "server": "online", "internet_required": False, "adb_required": False}
 
-    @app.post("/api/v1/auth/bootstrap/exchange")
-    async def exchange(payload: BootstrapExchange, response: Response, auth: AuthService = Depends(get_auth)) -> dict[str, str]:
-        principal = auth.exchange_bootstrap(payload.token)
-        if not principal:
-            raise HTTPException(status_code=401, detail={"code": "INVALID_BOOTSTRAP"})
+    @app.get("/api/v1/auth/state")
+    async def auth_state(auth: AuthService = Depends(get_auth)) -> dict[str, bool]:
+        return {"configured": auth.has_account()}
+
+    @app.post("/api/v1/auth/setup")
+    async def setup(payload: SetupRequest, request: Request, response: Response, auth: AuthService = Depends(get_auth)) -> dict[str, str]:
+        require_same_origin(request)
+        if payload.password != payload.password_confirmation:
+            raise HTTPException(status_code=400, detail={"code": "PASSWORD_MISMATCH"})
+        try:
+            principal = auth.setup_account(payload.token, payload.username, payload.password)
+        except AuthError as error:
+            raise auth_failure(error) from error
         set_session_cookie(response, principal)
-        return {"role": principal.role, "csrf_token": principal.csrf_token}
+        return {"user_name": principal.user_name, "role": principal.role, "csrf_token": principal.csrf_token}
+
+    @app.post("/api/v1/auth/login")
+    async def login(payload: LoginRequest, request: Request, response: Response, auth: AuthService = Depends(get_auth)) -> dict[str, str]:
+        require_same_origin(request)
+        client = request.client.host if request.client else "unknown"
+        key = f"login:{client}"
+        if not await login_limiter.claim(key):
+            raise HTTPException(status_code=429, detail={"code": "RATE_LIMITED"})
+        principal = auth.authenticate(payload.username, payload.password)
+        if not principal:
+            raise HTTPException(status_code=401, detail={"code": "INVALID_CREDENTIALS"})
+        await login_limiter.succeeded(key)
+        set_session_cookie(response, principal)
+        return {"user_name": principal.user_name, "role": principal.role, "csrf_token": principal.csrf_token}
+
+    @app.post("/api/v1/auth/recovery")
+    async def recovery(payload: RecoveryRequest, request: Request, response: Response, auth: AuthService = Depends(get_auth)) -> dict[str, str]:
+        require_same_origin(request)
+        if payload.password != payload.password_confirmation:
+            raise HTTPException(status_code=400, detail={"code": "PASSWORD_MISMATCH"})
+        try:
+            principal = auth.recover_account(payload.token, payload.password)
+        except AuthError as error:
+            raise auth_failure(error) from error
+        set_session_cookie(response, principal)
+        return {"user_name": principal.user_name, "role": principal.role, "csrf_token": principal.csrf_token}
 
     @app.get("/api/v1/auth/session")
     async def session(principal: Principal = Depends(current_principal)) -> dict[str, str]:
         return {"user_name": principal.user_name, "role": principal.role, "csrf_token": principal.csrf_token}
 
     @app.post("/api/v1/auth/logout")
-    async def logout(response: Response, principal: Principal = Depends(current_principal), auth: AuthService = Depends(get_auth)) -> dict[str, str]:
+    async def logout(response: Response, principal: Principal = Depends(csrf_principal), auth: AuthService = Depends(get_auth)) -> dict[str, str]:
         auth.revoke(principal.session_id)
         registry.clear_owner(_owner_id(principal))
-        response.delete_cookie(SESSION_COOKIE, path="/")
+        response.delete_cookie(
+            SESSION_COOKIE,
+            path="/",
+            secure=resolved.cookie_secure,
+            httponly=True,
+            samesite="strict",
+        )
         return {"state": "logged_out"}
 
     @app.get("/api/v1/status")

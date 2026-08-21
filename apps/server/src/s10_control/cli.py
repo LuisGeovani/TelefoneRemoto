@@ -46,7 +46,9 @@ def main(argv: list[str] | None = None) -> int:
     subcommands.add_parser("version", help="print version")
     subcommands.add_parser("bootstrap-token", help="print an unconsumed bootstrap token locally")
     auth = subcommands.add_parser("auth", help="local authentication recovery")
-    reset = auth.add_subparsers(dest="auth_command", required=True).add_parser("reset", help="invalidate sessions and create a new bootstrap token")
+    auth_commands = auth.add_subparsers(dest="auth_command", required=True)
+    auth_commands.add_parser("status", help="show whether the single admin account is configured")
+    reset = auth_commands.add_parser("reset", help="invalidate sessions and create a recovery bootstrap token")
     reset.add_argument("--yes", action="store_true", help="confirm session invalidation")
     args = parser.parse_args(argv)
     try:
@@ -55,15 +57,31 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "bootstrap-token":
             service = _auth_service()
-            print(service.local_bootstrap_token())
+            try:
+                print(service.local_bootstrap_token())
+            finally:
+                service.connection.close()
+            return 0
+        if args.command == "auth" and args.auth_command == "status":
+            service = _auth_service()
+            try:
+                status = service.account_status()
+                print(f"configured: {'true' if status.configured else 'false'}")
+                if status.username is not None:
+                    print(f"username: {status.username}")
+            finally:
+                service.connection.close()
             return 0
         if args.command == "auth" and args.auth_command == "reset":
             if not args.yes:
                 print("Refusing to invalidate sessions without --yes.", file=sys.stderr)
                 return 2
             service = _auth_service()
-            token = service.ensure_bootstrap(lifetime_seconds=15 * 60, force=True)
-            print(token)
+            try:
+                token = service.ensure_bootstrap(lifetime_seconds=15 * 60, force=True)
+                print(token)
+            finally:
+                service.connection.close()
             return 0
         if args.command == "serve":
             configure_logging()

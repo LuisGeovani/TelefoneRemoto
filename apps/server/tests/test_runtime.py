@@ -12,6 +12,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from unittest.mock import patch
 
+from s10_control.auth import SESSION_COOKIE
 from s10_control.cli import GRACEFUL_SHUTDOWN_SECONDS, main
 from s10_control.config import load_settings
 
@@ -42,16 +43,22 @@ def _wait_ready(port: int, timeout: float = 8.0) -> None:
 
 def _open_authenticated_websocket(port: int, bootstrap_path: Path) -> socket.socket:
     token = bootstrap_path.read_text(encoding="utf-8").strip()
+    password = "runtime-test-password"
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/v1/auth/bootstrap/exchange",
-        data=json.dumps({"token": token}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        f"http://127.0.0.1:{port}/api/v1/auth/setup",
+        data=json.dumps({
+            "token": token,
+            "username": "runtime-admin",
+            "password": password,
+            "password_confirmation": password,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=2.0) as response:
         cookie = SimpleCookie()
         cookie.load(response.headers["Set-Cookie"])
-        session = cookie["s10_session"].value
+        session = cookie[SESSION_COOKIE].value
 
     connection = socket.create_connection(("127.0.0.1", port), timeout=2.0)
     connection.sendall(
@@ -63,7 +70,7 @@ def _open_authenticated_websocket(port: int, bootstrap_path: Path) -> socket.soc
             "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
             "Sec-WebSocket-Version: 13\r\n"
             f"Origin: http://127.0.0.1:{port}\r\n"
-            f"Cookie: s10_session={session}\r\n\r\n"
+            f"Cookie: {SESSION_COOKIE}={session}\r\n\r\n"
         ).encode("ascii")
     )
     response = connection.recv(4096)

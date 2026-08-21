@@ -230,9 +230,11 @@ opcional e nunca altera o caminho LAN.
 
 ## 7. Requisitos não funcionais
 
-- **NFR-001 Segurança:** HTTPS na LAN ou listener loopback; bearer/session token
-  aleatório, papéis `viewer`, `operator`, `admin`, origem validada e logs sem
-  segredos.
+- **NFR-001 Segurança:** enquanto o listener for HTTP ele fica restrito à LAN;
+  a M2.2 usa uma única conta administrativa, senha com hash, sessão opaca
+  aleatória, CSRF/origem validada e logs sem segredos. HTTPS ou listener
+  loopback é gate obrigatório antes de publicação remota. Múltiplos papéis não
+  pertencem à M2.2.
 - **NFR-002 Local-first:** build da UI não consulta Internet em runtime; health e
   core permanecem íntegros sem WAN.
 - **NFR-003 Compatibilidade:** runtime aarch64/Bionic; no M1, Python/Node são
@@ -336,9 +338,9 @@ equivale a controle amplo do usuário Android. Portanto:
 - nenhum endpoint sensível é anônimo;
 - LAN não é tratada como confiável por si só;
 - tokens têm entropia alta, expiram/rotacionam e não aparecem em URL/log;
-- bootstrap é one-time e recuperável somente pela CLI local/SSH, que pode
-  invalidar sessões e emitir novo token; perda também do SSH exige intervenção
-  manual, não bypass remoto;
+- bootstrap é one-time por operação e serve somente a setup/recuperação; a CLI
+  local/SSH pode emitir token ou, com confirmação explícita, invalidar sessões
+  antes do reset. Perder também SSH exige intervenção manual, não bypass remoto;
 - adapters validam argumentos após autorização, não apenas no frontend;
 - túnel não remove autenticação interna;
 - segredos têm permissões de arquivo restritas;

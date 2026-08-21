@@ -27,7 +27,9 @@ python -m venv "$server_dir/.venv" || { echo "Could not create the venv; install
 "$server_dir/.venv/bin/python" -m pip install --no-deps --no-build-isolation --force-reinstall --editable "$server_dir"
 "$server_dir/.venv/bin/python" "$project_root/scripts/smoke-python-runtime.py"
 (cd "$web_dir" && npm ci && npm run build)
-(cd "$server_dir" && "$server_dir/.venv/bin/python" -m s10_control bootstrap-token >/dev/null)
+if "$server_dir/.venv/bin/s10-control" auth status | grep -qx 'configured: false'; then
+  "$server_dir/.venv/bin/s10-control" bootstrap-token >/dev/null
+fi
 
 service_dir="$PREFIX/var/service/s10-control"
 service_was_new=false
@@ -43,4 +45,4 @@ if [ "$service_was_new" = true ]; then
 else
   echo "Updated the existing service definition without restarting it."
 fi
-echo "Obtain the one-time admin token locally: $server_dir/.venv/bin/s10-control bootstrap-token"
+echo "For initial account setup, obtain the bootstrap token locally: $server_dir/.venv/bin/s10-control bootstrap-token"

@@ -125,11 +125,10 @@ Sem reboot. O teste de Termux:Boot não pertence ao M1.
 
 ## Milestone 2 — ADB, tela PNG e controle Android (etapa autorizada)
 
-**Estado:** núcleo funcional e a apresentação atômica do PNG validados uma vez
-no SM-G975F. Self-ADB, identidade, PNG 720 × 1520, portrait inteiro, controles
-exercitados e ausência de flicker da imagem funcionaram no aparelho. A correção
-final de estabilidade do texto auxiliar passou no host e aguarda reteste;
-capacidades específicas não reportadas continuam pendentes.
+**Estado:** fechado e validado uma vez no SM-G975F no commit `38e0963`.
+Self-ADB, identidade, PNG 720 × 1520, portrait inteiro, imagem e texto auxiliar
+sem flicker e HOME/BACK/RECENTS/tap/swipe/long press funcionaram. Capacidades
+específicas não reportadas continuam experimentais e pendentes.
 
 O M2 combina o gateway ADB, o ScreenProvider PNG e o AndroidController porque
 controle por coordenadas não pode existir sem referência visual atual. O
@@ -216,9 +215,9 @@ autorização.
     latência e gaps sem declarar SLA;
 11. restaurar somente config/serviço do projeto e reconfirmar SSH.
 
-**Versões:** o M2 funcional foi entregue como `0.2.0` e estabilizado como
-`0.2.1`. Self-ADB, PNG e controle permanecem experimentais até o runbook passar
-no SM-G975F.
+**Versões:** o M2 funcional foi entregue como `0.2.0`, estabilizado como
+`0.2.1` e fechado no hardware no commit `38e0963`. Uma campanha não promove
+self-ADB, PNG e controle para `guaranteed`; sua classe continua `experimental`.
 
 ## Estabilização M2.1 — reconciliação com hardware (autorizada)
 
@@ -244,7 +243,7 @@ funcionalidade nem abre um novo milestone.
 **Resultado em hardware:** aprovada. `update-termux.sh`, versão `0.2.1` e smoke
 passaram; `sv restart s10-control` substituiu o PID `8132` por `15504`, ready e
 `:8080` voltaram, Dashboard/WebSocket funcionaram após o restart, duas sessões
-SSH foram preservadas e a LAN real foi reportada em `192.168.1.13`. ADB
+SSH foram preservadas e um endereço LAN privado utilizável foi reportado. ADB
 permaneceu desabilitado.
 
 1. manter uma sessão SSH aberta de outro equipamento e confirmar uma segunda
@@ -256,6 +255,54 @@ permaneceu desabilitado.
    segundos, PID novo, ready local e novo acesso LAN;
 5. confirmar que o Dashboard mostra o IP privado usado pelo cliente LAN;
 6. reconfirmar SSH. Não habilitar nem alterar ADB durante esta validação.
+
+## Milestone 2.2 — autenticação persistente (implementada; host-validated)
+
+**Estado:** implementação `0.2.2` concluída nesta branch; validação real no
+SM-G975F ainda é obrigatória antes do aceite.
+
+### Escopo exato
+
+1. exatamente uma conta administrativa persistida no SQLite privado existente;
+2. senha armazenada como scrypt com salt aleatório, sem nova dependência nativa;
+3. login cotidiano por username/password e erro genérico de credencial;
+4. sessão opaca persistida, cookie `HttpOnly`, `SameSite=Strict`, `Path=/` e
+   expiração explícita de 30 dias; `Secure` configurável e desligado no HTTP LAN;
+5. bootstrap restrito ao setup inicial e recuperação, sem criar segunda conta;
+6. logout protegido por CSRF/Origin e reset de senha com `auth_version`, que
+   invalida sessões anteriores;
+7. limitador de login em memória, bounded e sem bloqueio permanente;
+8. WebSocket e controles M2 continuam autenticados pelo cookie e falham
+   fechados após revogação/expiração;
+9. migração aditiva do SQLite e defaults de configuração sem substituir o
+   estado local em `~/.local/share/s10-control`;
+10. UI mínima de setup/login/recovery, usuário atual e botão Sair.
+
+### Fora da M2.2
+
+- múltiplas contas, cadastro público, RBAC, convites, perfil ou gestão de
+  sessões;
+- Tailscale, túnel, PowerShare, H.264/scrcpy integrado, terminal, arquivos,
+  pacotes ou mudança no protocolo ADB/tela;
+- TLS/HTTPS automático; no HTTP LAN a senha e o cookie não têm
+  confidencialidade contra uma rede local hostil.
+
+### Validação segura no S10 após aprovação do deploy
+
+1. preservar duas sessões SSH e a rota visual scrcpy USB; registrar ready e
+   estado do serviço sem expor segredos;
+2. atualizar pelo fluxo seguro existente, que preserva config/SQLite, e
+   confirmar versão `0.2.2` mais smoke runtime;
+3. executar `s10-control auth status`; em estado não configurado, obter o token
+   localmente com `s10-control bootstrap-token` sem copiá-lo para logs/chat;
+4. criar a primeira conta em `/setup`, fechar/reabrir navegador e confirmar que
+   Dashboard e Tela Remota continuam autenticados;
+5. reiniciar manualmente somente `s10-control`, exigir PID novo/ready e confirmar
+   que a sessão segue válida; nunca reiniciar `sshd` ou o telefone;
+6. testar logout, login correto, erro genérico e recuperação; confirmar que o
+   cookie anterior falha após reset e o WebSocket novo funciona;
+7. confirmar permissões privadas do diretório/SQLite/bootstrap e ausência de
+   alteração em ADB, Wi-Fi, SSH e configuração local.
 
 ## Milestone 3 — observabilidade local avançada (planejado, não autorizado)
 
@@ -464,6 +511,7 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 - M2: trabalho isolado em `codex/m2-adb-screen-control`, sem misturar H.264 ou
   milestones futuros;
 - M2.1: estabilização isolada em `codex/m2.1-hardware-stabilization`;
+- M2.2: autenticação isolada em `codex/m2.2-persistent-auth`;
 - Conventional Commits e mudanças de estado no mesmo commit relevante;
 - lockfiles obrigatórios a partir de M1;
 - ADRs numerados e imutáveis por decisão relevante;
@@ -472,11 +520,9 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 
 ## Instrução exata ao próximo agente
 
-Leia os documentos raiz, ADRs 0003–0006 e o runbook. **Não implemente outro
-milestone.** M2.1, o núcleo funcional M2 e a correção de flicker da imagem foram
-validados no SM-G975F. O próximo trabalho operacional é implantar e retestar
-somente a estabilidade do texto auxiliar/status, preservando rota visual e SSH.
-Após esse aceite, a próxima tarefa autorizável é M2.2, autenticação persistente
-de uma única conta administrativa; ela ainda não foi planejada nem autorizada.
-Não adicione H.264, scrcpy, PowerShare, pairing/connect automático,
-shell/intent/package arbitrário ou feature futura.
+Leia os documentos raiz, ADRs 0003–0007 e os runbooks. **Não implemente outro
+milestone.** O M2 está fechado no hardware; a M2.2 está implementada e validada
+somente no host. O próximo trabalho é exclusivamente implantar e validar a
+autenticação `0.2.2` no S10, preservando SQLite/config, rota visual, ADB, Wi-Fi e
+SSH. Não adicione M3, H.264, scrcpy integrado, PowerShare, Tailscale,
+pairing/connect automático, shell/intent/package arbitrário ou feature futura.

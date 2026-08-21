@@ -1,228 +1,163 @@
 # Estado atual
 
 - **Atualizado em:** 2026-08-20 (America/Rio_Branco)
-- **Branch de trabalho:** `codex/m2-adb-hardware-validation`
-- **Versão:** `0.2.1`
-- **Milestone:** M2 validado no hardware; estabilidade final do texto auxiliar aguardando reteste
-- **Push:** autorizado explicitamente para este fechamento/UX final do M2
+- **Branch:** `codex/m2.2-persistent-auth`
+- **Versão:** `0.2.2`
+- **Milestone:** M2.2 implementada e validada no host; hardware pendente
+- **Base validada no S10:** `38e09631580e8dcb62aa88e896a3cca445cacc0d`
+- **Push:** autorizado pelo proprietário se toda a validação ficar verde
 
-## Resultado da estabilização M2.1
+## Fechamento real do M2
 
-Esta tarefa não adiciona feature. Ela reconcilia o repositório com a evidência
-obtida no Samsung Galaxy S10+ SM-G975F real:
+O proprietário aprovou o fechamento do M2 no Samsung Galaxy S10+ SM-G975F
+real. No commit base acima foram observados:
 
-- pins alterados para FastAPI 0.118.3, Pydantic 1.10.26 e Starlette 0.48.0;
-- smoke de versões/import do projeto inserido em instalação e atualização;
-- Uvicorn configurado com shutdown gracioso limitado a cinco segundos;
-- regressão POSIX inicia o servidor real, espera ready, abre WebSocket
-  autenticado, envia SIGTERM e exige saída dentro do limite;
-- telemetria LAN combina endereço observado no socket, hostname e seleção de
-  endereço-fonte por UDP conectado sem transmitir dados, sem `iproute2`, nome
-  de interface ou mutação da rede;
-- requests com `Range` são recusadas antes de `FileResponse`, fechando a
-  superfície alcançável do advisory de ranges da Starlette 0.48.0;
-- ADR 0004 documenta a compatibilidade, as mitigações e os riscos restantes.
-- no SM-G975F real, `sv restart s10-control` encerrou o PID `8132`, iniciou o
-  PID `15504`, restaurou readiness/LAN/WebSocket e preservou duas sessões SSH.
+- self-ADB funcional e identidade esperada validada;
+- stream PNG funcional, portrait 720 × 1520 correto e aproximadamente 1 FPS;
+- imagem sem flicker e último frame preservado entre atualizações;
+- texto auxiliar sem flicker;
+- HOME, BACK, RECENTS, tap, swipe e long press funcionais;
+- controles continuaram utilizáveis entre frames.
 
-Não foram adicionados PowerShare, H.264/scrcpy, terminal, arquivos, package
-manager, Cloudflare, Tailscale ou qualquer outro milestone.
+Pareamento/conexão ADB e configuração foram ações manuais do proprietário. O
+projeto não executou `kill-server`, `tcpip`, root/unroot, reboot, revogação,
+mudança de Wi-Fi ou ação sobre SSH. Fingerprint, target, chaves e screenshots
+reais não foram registrados no Git.
 
-## Evidência do M2 no hardware
+Capacidades não citadas na evidência — ENTER, volume, wake/sleep, texto ASCII,
+rotação real e stale real — continuam sem validação individual no hardware.
+Uma campanha única não satisfaz o critério de `guaranteed`; ADB/PNG/controle
+continuam classificados como `experimental`.
 
-A campanha M2 posterior à estabilização comprovou, em uma única sessão segura
-no SM-G975F real:
+## Resultado da M2.2
 
-- self-ADB manual em estado `device`, sem alterar o ADB USB de recuperação;
-- modelo e fingerprint esperados validados pelo provider, sem registrar target,
-  fingerprint ou chaves no Git;
-- Dashboard com ADB `available`/`IDENTITY_VERIFIED`;
-- PNG real contínuo na Tela Remota: 720 × 1520, portrait, rotação 0°, WebSocket
-  online e aproximadamente 1 FPS;
-- `KEYCODE_HOME` e `input swipe` tipados executados diretamente no Termux
-  funcionaram, isolando o transporte/input Android dos defeitos da aplicação.
+A M2.2 substitui bootstrap cotidiano por autenticação persistente:
 
-Dois defeitos do S10 Control foram inicialmente observados: controles pela UI
-eram recusados como `STALE_FRAME` quando o ACK do frame seguinte avançava o registry
-enquanto a ação aguardava o gate ADB; e o PNG portrait aparecia ampliado/
-recortado em viewport largo. O commit `52c7510` mantém um lease interno somente
-para a ação já validada e usa uma imagem absoluta com `contain` centralizado,
-letterbox e mapeamento pela área efetivamente renderizada. Após o deploy, o
-proprietário confirmou no aparelho que o frame portrait inteiro 720 × 1520 foi
-preservado e que os controles testados passaram a funcionar pelo painel.
+- exatamente uma conta administrativa, sem cadastro público/múltiplos usuários;
+- username configurável e senha scrypt com salt aleatório;
+- nenhum password, hash real ou segredo é versionado;
+- sessão opaca armazenada por digest no SQLite privado;
+- cookie `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age` e `Expires` de 30
+  dias; `Secure` configurável e desligado no HTTP LAN atual;
+- sessão sobrevive a recriação do app usando o mesmo diretório de estado;
+- logout exige cookie, CSRF e Origin e revoga a sessão atual;
+- recuperação troca a senha, incrementa `auth_version` e invalida sessões
+  anteriores;
+- bootstrap serve somente a `/setup` e `/recovery`; a troca direta antiga foi
+  removida;
+- `s10-control auth status`, `auth reset --yes` e `bootstrap-token` preservam
+  recuperação local sem mostrar hashes/sessões;
+- limitador de login em memória reserva cinco tentativas por cliente em 60
+  segundos, com cardinalidade bounded e limpeza após sucesso/restart;
+- WebSocket mantém cookie/Origin e revalida a sessão durante o stream e ACK;
+- UI oferece setup, login, recovery, usuário atual e Sair sem Web Storage;
+- SQLite migra aditivamente a coluna `auth_version`; config antiga recebe o
+  default de 30 dias sem reescrever JSON/estado local.
 
-O deploy seguinte validou no S10 a apresentação atômica: não há mais flicker da
-imagem, o último frame permanece visível entre atualizações, o portrait 720 ×
-1520 continua correto, os controles continuam funcionando e o stream segue
-online. O único defeito visual restante é o texto auxiliar do painel de
-controle, que alterna com um estado transitório durante o streaming. A correção
-atual separa ajuda estável de status discreto; ela passou no host e ainda aguarda
-reteste no S10.
+O hash escolhido é scrypt da biblioteca padrão (`N=16384`, `r=8`, `p=1`).
+Argon2id não foi adicionado porque sua extensão nativa ainda não foi comprovada
+no Python 3.14/Termux aarch64 do S10. A decisão e suas consequências estão no
+ADR 0007.
 
-## Evidência real no SM-G975F
+## Migração esperada no aparelho
 
-O projeto foi instalado em `~/s10-control` no Termux do SM-G975F, usuário
-`u0_a343`, com SSH existente na porta 8022. Nenhum segredo, token, fingerprint
-ou captura foi registrado no Git.
+O update preserva `~/.local/share/s10-control/`. Uma instalação M2 existente
+não possui `admin_account`; suas sessões bootstrap legadas falham fechadas, mas
+o servidor continua ready. O proprietário obtém bootstrap pela CLI local, cria
+a conta uma vez em `/setup` e passa a usar `/login`.
 
-Validados no aparelho em um deploy real:
+Nenhum arquivo local precisa ser editado, removido ou copiado ao repositório.
+Não foi executada qualquer ação no S10 nesta branch.
+
+## Evidência anterior do hardware
+
+Antes da M2.2 já estavam comprovados uma vez no SM-G975F:
 
 | Item | Evidência observada |
 |---|---|
-| Instalação Termux ARM64 | venv, dependências e pacote editável concluíram após ajuste dos pins |
-| Python | `3.14.6`; smoke M2.1 executado novamente com sucesso |
-| Stack backend | FastAPI `0.118.3`, Pydantic `1.10.26`, Starlette `0.48.0`; `update-termux.sh`, import e versão `0.2.1` passaram |
-| Frontend | `npm ci`, typecheck e build Vite concluíram; SPA/PWA carregou no navegador |
-| Serviço | runit reiniciou `s10-control` do PID `8132` para `15504` sem ficar preso em `got TERM`; `sshd` permaneceu online |
-| Listener | bind `0.0.0.0:8080` voltou após o restart e ready respondeu `ready` |
-| LAN | painel acessado de outro equipamento por `http://192.168.1.13:8080`; Dashboard reportou a LAN corretamente |
-| Autenticação | `auth reset --yes`, novo bootstrap token e novo login funcionaram após a atualização |
-| Dashboard | sistema, CPU, RAM, armazenamento e estados carregaram e voltaram após o restart |
-| Rede | probe de Internet online e probe SSH online |
-| Termux:API | CLI e APK compatíveis instalados; `termux-battery-status` respondeu |
-| Bateria | dados reais apareceram no Dashboard |
-| Tela Remota | PNG ADB real 720 × 1520 contínuo; portrait inteiro/contain confirmado após `52c7510` |
-| WebSocket da UI | conexão funcionou após restart e na campanha M2 a aproximadamente 1 FPS |
+| Runtime | Termux aarch64, Python 3.14.6 |
+| Stack | FastAPI 0.118.3, Pydantic 1.10.26, Starlette 0.48.0 |
+| Lifecycle M2.1 | update/smoke, SIGTERM/restart com PID novo e ready recuperado |
+| Recuperação | duas sessões SSH e rota scrcpy USB preservadas |
+| LAN | listener `0.0.0.0:8080`, Dashboard e WebSocket acessíveis de outro equipamento |
+| Métricas | CPU, RAM, storage, rede, Internet/SSH e bateria via Termux:API |
+| Tela | PNG 720 × 1520 portrait, contain correto, aproximadamente 1 FPS |
+| Controle | HOME/BACK/RECENTS/tap/swipe/long press e lease entre frames |
+| UX M2 | frame e texto auxiliar sem flicker |
 
-Essa é uma validação real, mas única. As capacidades acima permanecem na classe
-`probable`, não `guaranteed`, até haver execução repetível sob pré-condições
-registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
-
-## Falhas reais encontradas
-
-1. **Compatibilidade Python:** FastAPI 0.124.4/Pydantic 1.10.26/Starlette
-   0.50.0 falhou no Python 3.14.6 com `ImportError: cannot import name
-   'TypeAdapter' from 'pydantic'`. A combinação agora fixada importou e executou
-   no S10.
-2. **Shutdown:** `sv restart s10-control` fechou o listener após SIGTERM, mas o
-   processo Python permaneceu vivo e o runit mostrou `got TERM`. Após M2.1, o
-   teste real encerrou o PID `8132`, iniciou o PID `15504` e recuperou ready,
-   Dashboard e WebSocket sem perder SSH; a correção está validada no aparelho.
-3. **Detecção LAN:** o Dashboard mostrou `NO_PRIVATE_ADDRESS_VISIBLE` apesar do
-   acesso real por `192.168.1.20:8080`. Após M2.1, a descoberta mostrou o
-   endereço privado real e o painel foi usado por `192.168.1.13:8080`; a
-   correção está validada no aparelho sem alterar rede ou listener.
-4. **Bateria:** instalar somente o pacote CLI `termux-api` não bastou e o comando
-   aguardou o APK. Depois de instalar o app Termux:API de origem compatível, a
-   coleta funcionou. Ausência do APK continua sendo degradação esperada.
-5. **Controle frame-bound:** o frame seguinte confirmado invalidava uma ação
-   fresca que já aguardava o gate ADB, produzindo `STALE_FRAME` continuamente em
-   1 FPS. A correção de `52c7510` funcionou no reteste real: os controles
-   exercitados pelo proprietário passaram a funcionar pelo painel.
-6. **Viewport portrait:** o PNG 720 × 1520 participava do dimensionamento
-   intrínseco do grid e aparecia recortado em viewport largo. O layout com
-   `contain`, centralização e letterbox mostrou o frame inteiro no reteste real.
-7. **Flicker entre PNGs:** o candidato substituía o `src` visível antes de
-   decode/ACK e um overlay cobria o frame a cada atualização. A apresentação
-   atômica foi validada no reteste real: a imagem não pisca e o último frame
-   permanece visível entre atualizações.
-8. **Texto auxiliar do controle:** o mesmo texto era reutilizado para estados
-   internos de ACK/frame e alternava a aproximadamente 1 FPS. A UI agora mantém
-   a ajuda estável e publica estados operacionais em badge separado; aguarda
-   reteste real.
+LAN sem WAN e soak térmico/energético continuam pendentes. O teste M2.1 de
+restart, versões e LAN foi real, mas seus identificadores de processo/endereço
+foram omitidos daqui por não serem necessários à reprodução.
 
 ## Classificação e estado verificável
 
-| Capacidade | Classe | Evidência atual |
+| Capacidade | Classe | Estado/evidência |
 |---|---|---|
-| Runtime e lifecycle M2.1 | `probable` | versão `0.2.1`, smoke e restart real `8132` → `15504` validados no SM-G975F |
-| Core, auth, health, Dashboard e métricas básicas | `probable` | executados uma vez no SM-G975F; repetição/soak pendentes |
-| Listener e acesso LAN `0.0.0.0:8080` | `probable` | acesso real por `192.168.1.13` e telemetria correta após restart; teste sem WAN pendente |
-| SSH observacional | `probable` | probe e serviço real online; permanece protegido/read-only |
-| Termux:API e bateria | `probable` | APK+CLI compatíveis responderam no aparelho |
-| Frontend Tela Remota e WebSocket da UI | `probable` | WS/PNG, viewport portrait e ausência de flicker da imagem validados uma vez; texto auxiliar aguarda reteste |
-| ADB no próprio Termux | `experimental` | uma conexão manual real chegou a `device` e passou identidade; repetição/reconnect pendentes |
-| Screenshot PNG por ADB | `experimental` | PNG real 720 × 1520, portrait/0°, ~1 FPS observado uma vez |
-| Controle Android vinculado ao frame | `experimental` | controles testados pelo proprietário funcionaram após `52c7510`; matriz completa/repetição pendentes |
-| Wake/sleep e `adb input text` | `experimental` | não executados no aparelho |
-| H.264/scrcpy e PowerShare | `experimental` | não implementados |
-| Operações que exigem root/privilégio de sistema | `privileged_required` | permanecem fora do projeto |
+| Runtime/lifecycle Termux | `probable` | Python 3.14.6, smoke e restart real validados uma vez |
+| Core, health, Dashboard e métricas | `probable` | executados no S10; soak/LAN-sem-WAN pendentes |
+| Listener/LAN | `probable` | acesso LAN e telemetria privada real observados |
+| SSH observacional | `probable` | serviço preservado e somente leitura |
+| Termux:API/bateria | `probable` | APK+CLI compatíveis responderam |
+| ADB no próprio Termux | `experimental` | conexão manual e identidade validadas uma vez |
+| Screenshot PNG ADB | `experimental` | 720 × 1520 portrait/~1 FPS observado uma vez |
+| Controle frame-bound | `experimental` | seis famílias de ação validadas no painel |
+| Auth M2.2 | `probable` | host-validated; ainda não instalada/testada no S10 |
+| H.264/scrcpy integrado/PowerShare | `experimental` | não implementados |
+| Operações root/sistema | `privileged_required` | fora do projeto |
 
-## Não validado no hardware
+## Validação no host da M2.2
 
-- repetição do self-ADB/reconnect e comportamento após mudança da porta do serviço;
-- rotação diferente de 0° e mudança real de orientação durante frame/ação;
-- tap, swipe, long press, HOME, BACK, RECENTS, ENTER e volume;
-- wake/sleep e texto ASCII;
-- estabilidade do texto auxiliar, stale real, pós-condições, fullscreen móvel e matriz individual de gestos/teclas;
-- LAN com WAN indisponível, soak e consumo térmico/energético.
-
-ADB permaneceu `enabled: false` durante a validação M2.1. Na campanha M2,
-pareamento/conexão e configuração foram ações manuais do proprietário; o
-provider foi habilitado somente após identidade verificada. O projeto não
-executou `disconnect`, `kill-server`, `tcpip`, `root`, `unroot`, reboot,
-revogação, alteração de Wi-Fi ou ação sobre SSH.
-
-## Validação no host desta branch
-
-- ambiente de teste: Python 3.12.13 com os pins exatos do runtime;
-- backend: 61 testes passaram e 1 regressão POSIX de SIGTERM foi pulada no
-  Windows; a suíte inclui import em subprocesso, versões, LAN por socket/rota,
-  `Range` recusado, timeout de shutdown, ADB degradado e todos os contratos M2;
-- a regressão SIGTERM fica habilitada automaticamente em Linux/Termux e mantém
-  um WebSocket autenticado aberto durante o sinal;
-- frontend 0.2.1: `npm test` passou typecheck e regressões de apresentação,
-  ajuda/status, layout e geometria; `npm run build` gerou assets locais;
+- backend completo: 75 testes passaram; 2 skips esperados no Windows
+  (permissões POSIX e SIGTERM real);
+- a suíte inclui migração, persistência, revogação, rate limiting atômico,
+  HTTP/WS anônimo, WebSocket autenticado e todos os contratos M2;
+- frontend: 21 testes/typecheck passaram; build Vite 0.2.2 gerou 23 módulos e
+  assets locais;
 - `compileall` de source, testes e smoke passou;
-- `pip check` reportou `No broken requirements found`;
-- `smoke-python-runtime.py` importou o projeto em subprocesso e confirmou os
-  três pins;
-- processo Uvicorn real iniciou em `0.0.0.0:8080`; ready e SPA responderam 200.
-  O harness Windows não entregou Ctrl+C ao filho e fez cleanup pelo PID exato,
-  portanto isso não conta como teste de shutdown;
-- `bash -n` passou para install, update e serviço runit. A revisão confirmou
-  que instalação/atualização executam o smoke antes do bootstrap/build, não
-  iniciam automaticamente serviço novo e não reiniciam aparelho, rede, ADB ou
-  SSH;
-- no fechamento M2.1 anterior, a matriz foi repetida: 59 testes backend passaram
-  com 1 skip POSIX esperado no Windows, smoke isolado, `compileall`, `pip check`,
-  typecheck/build frontend, `bash -n` e `git diff --check` passaram;
-- nenhuma chamada tocou ADB, Wi-Fi, SSH ou o aparelho real.
+- `pip check`: `No broken requirements found`;
+- smoke direto: ready com Python 3.12.13 e os pins FastAPI 0.118.3, Pydantic
+  1.10.26 e Starlette 0.48.0;
+- `bash -n` passou para install, update e runit.
+- `git diff --check` passou; 1.688 linhas adicionadas foram verificadas contra
+  IP privado real, chave privada/SSH, fingerprint preenchida, cookie e token
+  longos, sem achados;
+- revisão do instalador confirmou que update não reinicia serviços e que uma
+  reinstalação com conta configurada não gera bootstrap de recuperação.
+
+Os skips de bits POSIX e SIGTERM continuam obrigatórios no Termux durante a
+validação de hardware. Nenhuma chamada desta branch tocou o S10, ADB, SSH,
+Wi-Fi ou configuração real.
 
 ## VEX estreita: Starlette 0.48.0
 
-Starlette 0.48.0 permanece afetada por advisories e não é chamada de corrigida:
-
-| Advisory | Superfície nesta aplicação |
-|---|---|
-| `GHSA-7f5h-v6xp-fcq8` | `FileResponse` existe, mas todo `Range` é recusado no middleware antes do roteamento; teste negativo obrigatório |
-| `GHSA-86qp-5c8j-p5mr` | não há decisão baseada em `request.url`; path de cache/log vem de `scope["path"]` |
-| `GHSA-wqp7-x3pw-xc5r` | afeta `StaticFiles` no Windows; runtime é Termux/POSIX e não há `StaticFiles` |
-| `GHSA-x746-7m8f-x49c` | não há `HTTPEndpoint` |
-| `GHSA-jp82-jpqv-5vv3` | não há uso de `request.url`/hostname |
-| `GHSA-82w8-qh3p-5jfq` | não há `request.form()` nem parser multipart |
-
-A análise completa e links oficiais estão no ADR 0004. Qualquer introdução de
-Range, `request.url`, forms, `StaticFiles`, `HTTPEndpoint` ou deploy Windows
-invalida a VEX. Scanners devem continuar sinalizando a dependência até uma pilha
-upstream corrigida ser comprovada no Termux ARM64.
+Starlette 0.48.0 permanece em ranges afetados por advisories. O ADR 0004 registra
+links e mitigação: todo `Range` é recusado antes de `FileResponse`; não há
+decisão por `request.url`, forms/multipart, `StaticFiles` no runtime,
+`HTTPEndpoint` ou deploy Windows. A M2.2 não amplia essas superfícies. Qualquer
+mudança nelas invalida a VEX e exige nova revisão.
 
 ## Riscos remanescentes
 
-1. Pydantic 1 não tem suporte upstream para Python 3.14, embora 1.10.26 tenha
-   funcionado neste aparelho; uma atualização futura do Python Termux pode
-   quebrar o runtime.
-2. Starlette 0.48.0 está em ranges vulneráveis; as mitigações dependem da
-   superfície permanecer estreita e devem ser reavaliadas em qualquer mudança.
-3. O prazo do Uvicorn resolveu o restart preso no teste real, mas pode cancelar
-   requests/WS em andamento após cinco segundos; o WebSocket funcionou depois
-   do restart no teste.
-4. A descoberta LAN funcionou no teste real depois de uma request por
-   `192.168.1.13`; antes da primeira request, os fallbacks ainda dependem das
-   rotas que o kernel expõe ao Termux.
-5. Self-ADB, PNG, viewport, controles exercitados e ausência de flicker da
-   imagem foram comprovados uma vez; estabilidade do texto auxiliar, matriz
-   completa de ações, stale/orientação e repetição permanecem.
-6. HTTP LAN não oferece confidencialidade e `:8080` não deve ser publicado por
-   WAN ou túnel.
-7. Android/One UI ainda pode matar Termux e `sshd`; runit não garante uptime do
-   app Android.
+1. A M2.2 ainda não foi executada no Python 3.14/Termux real; custo do scrypt e
+   persistência após restart precisam ser medidos no aparelho.
+2. HTTP LAN não oferece confidencialidade para senha/cookie. A porta 8080 não
+   deve ser publicada em WAN/túnel; `Secure` só pode ser ligado com HTTPS.
+3. O rate limiter é intencionalmente em memória e reinicia com o processo; não é
+   proteção contra ataque distribuído.
+4. Pydantic 1 não tem suporte upstream formal para Python 3.14, apesar da
+   combinação fixada ter funcionado no S10.
+5. A VEX da Starlette depende da superfície continuar estreita.
+6. Android/One UI ainda pode matar o processo Termux e `sshd`; runit não garante
+   uptime do aplicativo Android.
+7. Sobrevivência ao reboot é propriedade do estado/cookie, mas reboot não será
+   executado para validar esta branch sem autorização e rota de recuperação.
+8. O cookie é vinculado à origem; mudança do endereço/hostname LAN após reboot
+   exige novo login embora a sessão continue persistida no servidor.
 
 ## Próximo passo seguro
 
-M2.1, o núcleo funcional M2 e a apresentação sem flicker da imagem passaram no
-hardware. O próximo passo é implantar somente a correção de ajuda/status e
-confirmar texto estável, controle contínuo e preservação do portrait/letterbox.
-Após esse aceite, a próxima tarefa é M2.2 — autenticação persistente com uma
-única conta administrativa; ela não está autorizada nesta branch. Não iniciar
-M2.2, M3, PowerShare, H.264 ou outro milestone.
+Implantar **somente M2.2** pelo runbook de autenticação, preservar config/SQLite,
+ADB, Wi-Fi, SSH e rota scrcpy, e validar setup, login persistente, restart apenas
+de `s10-control`, logout, recuperação e Tela Remota autenticada. Não iniciar M3,
+Tailscale, PowerShare, H.264, terminal, arquivos ou outro milestone antes do
+aceite real da autenticação.

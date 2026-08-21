@@ -11,3 +11,6 @@ Python 3.11+, pip dentro da venv e o requisito de Node do Vite. Atualizações n
 reiniciam o serviço existente. Instalação e atualização executam
 `smoke-python-runtime.py` depois do install editável e falham antes do bootstrap
 ou build se versões/imports não corresponderem ao stack provado no S10.
+O instalador só prepara bootstrap automaticamente quando `auth status` indica
+que nenhuma conta existe; reinstalar uma instância configurada não cria token
+de recuperação nem invalida sessão.

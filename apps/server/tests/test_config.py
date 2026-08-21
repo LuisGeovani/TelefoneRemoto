@@ -16,6 +16,34 @@ class ConfigurationTests(unittest.TestCase):
             self.assertIsNone(settings.adb.expected_fingerprint)
             self.assertEqual(settings.adb.expected_model, "SM-G975F")
             self.assertEqual(settings.screen.max_clients, 2)
+            self.assertEqual(settings.session_ttl_hours, 24 * 30)
+            self.assertFalse(settings.cookie_secure)
+
+    def test_legacy_top_level_session_ttl_does_not_shorten_new_persistent_sessions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = load_settings(root)
+            raw = json.loads(settings.config_path.read_text(encoding="utf-8"))
+            raw.pop("auth")
+            raw["session_ttl_hours"] = 24
+            settings.config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+            migrated = load_settings(root)
+            self.assertEqual(migrated.session_ttl_hours, 24 * 30)
+            self.assertFalse(migrated.cookie_secure)
+
+    def test_cookie_secure_is_explicitly_configurable_for_future_https(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = load_settings(root)
+            raw = json.loads(settings.config_path.read_text(encoding="utf-8"))
+            raw["auth"]["cookie_secure"] = True
+            raw["auth"]["session_ttl_hours"] = 48
+            settings.config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+            configured = load_settings(root)
+            self.assertTrue(configured.cookie_secure)
+            self.assertEqual(configured.session_ttl_hours, 48)
 
     def test_unsafe_target_and_non_printable_fingerprint_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -3,14 +3,15 @@
 Servidor de controle **local-first** para um Samsung Galaxy S10+ SM-G975F,
 executado no Termux, sem root e com o display físico inoperante.
 
-O projeto está no **Milestone 2**. A estabilização M2.1 `0.2.1` foi validada no
-SM-G975F real (runtime Termux, restart gracioso, recuperação do painel/WebSocket,
-preservação do SSH e telemetria LAN). A campanha M2 comprovou uma vez self-ADB,
-identidade, PNG real 720 × 1520, viewport portrait inteiro, controles pelo
-painel e ausência de flicker da imagem. A estabilidade final do texto auxiliar
-passou no host e aguarda reteste no aparelho. O backend é Python/FastAPI com SQLite e a interface é
-React/TypeScript/Vite, compilada para assets locais e entregue pelo próprio
-backend. A base de trabalho é:
+O projeto está na **M2.2 `0.2.2`**, validada no host e ainda pendente no
+SM-G975F real. O M2 foi fechado no hardware no commit `38e0963`: self-ADB,
+identidade, stream PNG 720 × 1520, portrait correto, apresentação sem flicker,
+texto auxiliar estável e os controles HOME/BACK/RECENTS/tap/swipe/long press
+funcionaram. A M2.2 acrescenta uma única conta administrativa com login por
+username/password e sessão persistente de 30 dias; bootstrap passa a servir
+somente para setup e recuperação. O backend é Python/FastAPI com SQLite e a
+interface é React/TypeScript/Vite, compilada para assets locais e entregue pelo
+próprio backend. A base de trabalho é:
 
 - [SPEC.md](SPEC.md): escopo consolidado e matriz de viabilidade;
 - [ARCHITECTURE.md](ARCHITECTURE.md): arquitetura, módulos e contratos;
@@ -37,3 +38,16 @@ H.264/scrcpy, PowerShare, terminal web, acesso remoto, package manager e file
 manager não pertencem a esta etapa. Antes de usar ADB no aparelho, siga o
 [runbook seguro](docs/operations/adb-screen-control-safe.md). O teste real no
 S10 deve preservar SSH, Wi-Fi e as autorizações ADB existentes.
+
+## Autenticação
+
+No uso normal, abra o painel e entre com o username e a senha da única conta
+administrativa. O cookie opaco é `HttpOnly`, `SameSite=Strict`, dura 30 dias e
+é validado contra o estado persistente fora do repositório. Não há token em
+`localStorage` nem cadastro público.
+
+Em uma instalação atualizada que ainda não possui conta, obtenha o bootstrap
+somente no terminal local com `s10-control bootstrap-token` e use `/setup`. Para
+recuperação, gere novo token pelo mesmo comando e use `/recovery`; `s10-control
+auth reset --yes` também invalida todas as sessões antes de emitir a credencial
+de recuperação. Veja o [runbook de autenticação](docs/operations/persistent-auth-safe.md).

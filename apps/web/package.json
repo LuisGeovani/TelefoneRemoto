@@ -1,12 +1,12 @@
 {
   "name": "s10-control-web",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "tsc -b --noEmit && node --experimental-strip-types --test src/features/screen/*.test.mjs"
+    "test": "tsc -b --noEmit && node --experimental-strip-types --test src/features/screen/*.test.mjs src/app/*.test.mjs"
   },
   "dependencies": {
     "react": "19.2.8",

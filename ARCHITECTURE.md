@@ -1,8 +1,9 @@
 # Arquitetura do S10 Control Server
 
-- **Status:** M2 estabilizado após deploy real; runtime pelo ADR 0002, slice
+- **Status:** M2 fechado no hardware; runtime pelo ADR 0002, slice
   ADB/PNG/controle pelo ADR 0003, compatibilidade M2.1 pelo ADR 0004, lease pela
-  ADR 0005 e apresentação atômica pela ADR 0006
+  ADR 0005, apresentação atômica pela ADR 0006 e autenticação persistente M2.2
+  pelo ADR 0007
 - **Estilo:** monólito modular, hexagonal/ports-and-adapters, local-first
 
 ## 1. Decisão principal
@@ -107,7 +108,7 @@ capacidades. MediaProjection não inicia silenciosamente após reboot.
 | Camada | Responsabilidade | Não pode fazer |
 |---|---|---|
 | Transport | HTTP(S), SSE, WebSocket, limites, serialização | chamar binários ou Android diretamente |
-| Auth/Policy | identidade, papéis, CSRF/origin, allowlists, guardrails | confiar em validação apenas do frontend |
+| Auth/Policy | conta administrativa, sessão, CSRF/origin, allowlists, guardrails | confiar em validação apenas do frontend |
 | Application | casos de uso, operações, deadlines, idempotência | conhecer sintaxe de CLI de provider |
 | Domain | capacidades, estados, erros, métricas, eventos | importar packages de infraestrutura |
 | Ports | contratos de ADB, screen, controller etc. | conter regra específica de fornecedor |
@@ -195,7 +196,7 @@ Componentes internos:
 
 - `app`: wiring e ciclo de vida;
 - `api`: transports e schemas;
-- `auth`: sessão/token/papéis;
+- `auth`: conta administrativa única, senha, sessão e recuperação local;
 - `policy`: proibições e allowlists;
 - `capabilities`: probes, cache e eventos;
 - `operations`: fila limitada, cancelamento e idempotência;
@@ -581,31 +582,43 @@ No M2 existe somente a classe de ingresso LAN. A futura classe
 sem acesso às rotas de console. Headers enviados pelo cliente não podem criar ou
 sobrescrever a classe de ingresso.
 
-Bootstrap gera token de alta entropia em arquivo modo `0600` e o mostra uma vez
-no terminal. A troca cria cookie `HttpOnly`, `SameSite=Strict`; no HTTP LAN do
-M1/M2 ele não pode usar `Secure`. Ações mutáveis exigem validação de
-`Origin`/`Host`, schemas estritos e rate limit. Papéis:
+A M2.2 substitui o bootstrap cotidiano por uma única conta administrativa. Não
+há cadastro público, múltiplos usuários, RBAC ou gestão remota de sessões. O
+campo interno `role=admin` permanece apenas como compatibilidade com os guards
+tipados do M2; não é uma superfície configurável.
 
-- `viewer`: health, capacidades, métricas, screen read-only;
-- `operator`: controle e operações não administrativas;
-- `admin`: configuração, console, roots não sensíveis configuradas e túnel.
+A senha usa scrypt da biblioteca padrão (`N=16384`, `r=8`, `p=1`) com salt
+aleatório de 128 bits. A decisão evita uma extensão Argon2 nativa ainda não
+comprovada no Termux/Python 3.14 ARM64. SQLite armazena somente salt, digest,
+esquema e `auth_version`, nunca senha em claro. Comparações de digest e tokens
+usam comparação constante.
 
-Tokens nunca entram em query string, logs, eventos ou Git.
+O login cria segredo opaco aleatório; somente seu digest salgado é persistido.
+O cookie contém o identificador e o segredo, é `HttpOnly`, `SameSite=Strict`,
+`Path=/` e possui `Max-Age`/`Expires` de 30 dias. `Secure` é configurável, mas
+fica `false` no HTTP LAN atual para não tornar o login inoperante; ele deve ser
+ativado junto de HTTPS em uma decisão futura. Nada é armazenado em
+`localStorage`/`sessionStorage`.
 
-Contrato de autenticação do M1:
+Bootstrap é credencial de curta duração somente para `/setup` ou `/recovery`.
+Setup cria o singleton e consome o token. Recuperação troca a senha, incrementa
+`auth_version`, revoga sessões anteriores e consome o token. O comando local
+`s10-control auth reset --yes` incrementa a versão, revoga sessões e emite uma
+credencial de recuperação; `s10-control auth status` mostra apenas configured e
+username. Tokens nunca entram em query string, logs, eventos ou Git.
 
-- `POST /api/v1/auth/bootstrap/exchange`: consome token one-time com expiração;
-- `GET /api/v1/auth/session`: identidade/papel atual;
-- `POST /api/v1/auth/logout`: encerra a sessão atual;
-- `POST /api/v1/auth/tokens`: admin emite credencial `viewer`/`operator`/`admin`;
-- `POST /api/v1/auth/tokens/{id}/rotate`: rotação atômica;
-- `DELETE /api/v1/auth/tokens/{id}`: revogação;
-- `s10control auth reset`: CLI local/SSH, invalida todas as sessões e emite novo
-  bootstrap; nunca é endpoint remoto.
+Contrato da M2.2:
 
-IDs e hashes, nunca tokens em claro, são persistidos. Perder token e SSH não
-habilita recuperação remota: exige intervenção manual/DeX, preservando o modelo
-de segurança.
+- `GET /api/v1/auth/state`: informa apenas se a conta existe;
+- `POST /api/v1/auth/setup`: bootstrap + username + senha, uma única vez;
+- `POST /api/v1/auth/login`: username/senha com erro genérico e rate limit;
+- `POST /api/v1/auth/recovery`: bootstrap + nova senha;
+- `GET /api/v1/auth/session`: revalida cookie, expiração e `auth_version`;
+- `POST /api/v1/auth/logout`: exige cookie, CSRF e Origin e revoga a sessão;
+- WebSocket: cookie e Origin, revalidados durante o stream e após ACK.
+
+Perder senha e SSH não habilita recuperação remota automática: obter bootstrap
+continua exigindo acesso local/SSH à CLI, preservando o modelo de segurança.
 
 ## 10. Persistência
 
@@ -620,7 +633,10 @@ ${S10_CONTROL_DATA_DIR}/bootstrap.token
 Sem override, o diretório vem de `XDG_STATE_HOME` ou do home resolvido em runtime;
 nenhum prefixo Termux é hardcoded. Diretório e arquivos são privados. Config usa
 temp file no mesmo diretório, `fsync` e replace atômico; SQLite vem da biblioteca
-padrão do Python. Target/fingerprint ADB ficam somente na configuração local e
+padrão do Python. A conta, hashes e sessões opacas vivem no SQLite e sobrevivem
+a restart/atualização porque os scripts não substituem o diretório de estado.
+`bootstrap.token` existe somente durante setup/recuperação. Target/fingerprint
+ADB ficam somente na configuração local e
 nunca são aprendidos automaticamente. PNGs ficam em memória; capturas manuais de
 probe usam diretório temporário privado e nunca entram no Git.
 

@@ -14,8 +14,36 @@ from starlette.websockets import WebSocketDisconnect
 from s10_control.adb import AdbState, MockAdbController
 from s10_control.auth import SESSION_COOKIE
 from s10_control.config import load_settings
-from s10_control.main import create_app
+from s10_control.main import LoginRateLimiter, create_app
 from s10_control.screen import PNG_SIGNATURE, Frame, FrameMetadata, MockScreenProvider, ScreenError, ScreenProvider
+
+
+AUTH_HEADERS = {"Origin": "http://testserver"}
+TEST_USERNAME = "test-admin"
+TEST_PASSWORD = "test-password-1234"
+
+
+def _setup_payload(settings) -> dict[str, str]:
+    return {
+        "token": settings.bootstrap_path.read_text(encoding="utf-8").strip(),
+        "username": TEST_USERNAME,
+        "password": TEST_PASSWORD,
+        "password_confirmation": TEST_PASSWORD,
+    }
+
+
+async def setup_admin_async(client: httpx.AsyncClient, settings) -> dict[str, str]:
+    response = await client.post("/api/v1/auth/setup", json=_setup_payload(settings), headers=AUTH_HEADERS)
+    if response.status_code != 200:
+        raise AssertionError(response.text)
+    return response.json()
+
+
+def setup_admin(client: TestClient, settings) -> dict[str, str]:
+    response = client.post("/api/v1/auth/setup", json=_setup_payload(settings), headers=AUTH_HEADERS)
+    if response.status_code != 200:
+        raise AssertionError(response.text)
+    return response.json()
 
 
 class WaitingMockAdbController(MockAdbController):
@@ -45,6 +73,154 @@ class HangingScreenProvider(ScreenProvider):
         while not self.release.is_set():
             await asyncio.sleep(0.01)
         raise ScreenError("TEST_PROVIDER_RELEASED")
+
+
+class PersistentAuthenticationApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_setup_cookie_login_logout_and_anonymous_protection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = load_settings(Path(directory))
+            app = create_app(settings, adb_controller=MockAdbController(AdbState.UNAVAILABLE), screen_provider=MockScreenProvider(error_code="NO_STREAM"))
+            async with app.router.lifespan_context(app):
+                transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    self.assertEqual((await client.get("/api/v1/auth/state")).json(), {"configured": False})
+                    self.assertEqual((await client.get("/api/v1/status")).status_code, 401)
+                    invalid = await client.post(
+                        "/api/v1/auth/setup",
+                        headers=AUTH_HEADERS,
+                        json={**_setup_payload(settings), "token": "invalid-bootstrap-token-value"},
+                    )
+                    self.assertEqual(invalid.status_code, 401)
+                    self.assertEqual(invalid.json()["detail"]["code"], "INVALID_BOOTSTRAP")
+
+                    setup = await client.post("/api/v1/auth/setup", headers=AUTH_HEADERS, json=_setup_payload(settings))
+                    self.assertEqual(setup.status_code, 200, setup.text)
+                    cookie = setup.headers["set-cookie"]
+                    self.assertIn(f"{SESSION_COOKIE}=", cookie)
+                    self.assertIn("HttpOnly", cookie)
+                    self.assertIn("SameSite=strict", cookie)
+                    self.assertIn("Path=/", cookie)
+                    self.assertIn("Max-Age=2592000", cookie)
+                    self.assertIn("expires=", cookie.lower())
+                    self.assertNotIn("; Secure", cookie)
+                    self.assertEqual((await client.get("/api/v1/auth/state")).json(), {"configured": True})
+                    self.assertEqual((await client.get("/api/v1/auth/session")).json()["user_name"], TEST_USERNAME)
+
+                    second = await client.post("/api/v1/auth/setup", headers=AUTH_HEADERS, json={
+                        "token": "another-bootstrap-token-value",
+                        "username": "second-admin",
+                        "password": TEST_PASSWORD,
+                        "password_confirmation": TEST_PASSWORD,
+                    })
+                    self.assertEqual(second.status_code, 409)
+                    self.assertEqual(second.json()["detail"]["code"], "ACCOUNT_ALREADY_CONFIGURED")
+                    self.assertEqual((await client.post("/api/v1/auth/bootstrap/exchange", json={"token": "not-a-session"})).status_code, 405)
+
+                    csrf = setup.json()["csrf_token"]
+                    self.assertEqual((await client.post("/api/v1/auth/logout")).status_code, 403)
+                    logout = await client.post(
+                        "/api/v1/auth/logout",
+                        headers={**AUTH_HEADERS, "X-CSRF-Token": csrf},
+                    )
+                    self.assertEqual(logout.status_code, 200)
+                    self.assertEqual((await client.get("/api/v1/auth/session")).status_code, 401)
+
+                    wrong_user = await client.post(
+                        "/api/v1/auth/login",
+                        headers=AUTH_HEADERS,
+                        json={"username": "wrong-admin", "password": TEST_PASSWORD},
+                    )
+                    wrong_password = await client.post(
+                        "/api/v1/auth/login",
+                        headers=AUTH_HEADERS,
+                        json={"username": TEST_USERNAME, "password": "wrong-password"},
+                    )
+                    self.assertEqual(wrong_user.status_code, 401)
+                    self.assertEqual(wrong_password.status_code, 401)
+                    self.assertEqual(wrong_user.json(), wrong_password.json())
+                    malformed_user = await client.post(
+                        "/api/v1/auth/login",
+                        headers=AUTH_HEADERS,
+                        json={"username": "not a valid username!", "password": TEST_PASSWORD},
+                    )
+                    empty_password = await client.post(
+                        "/api/v1/auth/login",
+                        headers=AUTH_HEADERS,
+                        json={"username": TEST_USERNAME, "password": ""},
+                    )
+                    self.assertEqual(malformed_user.status_code, 401)
+                    self.assertEqual(empty_password.status_code, 401)
+                    self.assertEqual(malformed_user.json(), wrong_password.json())
+                    self.assertEqual(empty_password.json(), wrong_password.json())
+                    login = await client.post(
+                        "/api/v1/auth/login",
+                        headers=AUTH_HEADERS,
+                        json={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+                    )
+                    self.assertEqual(login.status_code, 200)
+
+    async def test_session_survives_app_recreation_with_same_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = load_settings(Path(directory))
+            first = create_app(settings, adb_controller=MockAdbController(AdbState.UNAVAILABLE), screen_provider=MockScreenProvider(error_code="NO_STREAM"))
+            async with first.router.lifespan_context(first):
+                transport = httpx.ASGITransport(app=first)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    await setup_admin_async(client, settings)
+                    cookie = client.cookies.get(SESSION_COOKIE)
+                    self.assertIsNotNone(cookie)
+
+            second = create_app(settings, adb_controller=MockAdbController(AdbState.UNAVAILABLE), screen_provider=MockScreenProvider(error_code="NO_STREAM"))
+            async with second.router.lifespan_context(second):
+                transport = httpx.ASGITransport(app=second)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    client.cookies.set(SESSION_COOKIE, cookie)
+                    session = await client.get("/api/v1/auth/session")
+                    self.assertEqual(session.status_code, 200)
+                    self.assertEqual(session.json()["user_name"], TEST_USERNAME)
+                    self.assertFalse(settings.bootstrap_path.exists())
+
+    async def test_recovery_invalidates_old_cookie_and_rate_limit_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = load_settings(Path(directory))
+            app = create_app(settings, adb_controller=MockAdbController(AdbState.UNAVAILABLE), screen_provider=MockScreenProvider(error_code="NO_STREAM"))
+            async with app.router.lifespan_context(app):
+                transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as owner:
+                    await setup_admin_async(owner, settings)
+                    old_cookie = owner.cookies.get(SESSION_COOKIE)
+                    recovery_token = app.state.auth.local_bootstrap_token()
+                    recovered = await owner.post("/api/v1/auth/recovery", headers=AUTH_HEADERS, json={
+                        "token": recovery_token,
+                        "password": "recovered-test-password",
+                        "password_confirmation": "recovered-test-password",
+                    })
+                    self.assertEqual(recovered.status_code, 200)
+                    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as stale:
+                        stale.cookies.set(SESSION_COOKIE, old_cookie)
+                        self.assertEqual((await stale.get("/api/v1/auth/session")).status_code, 401)
+
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as attacker:
+                    for _ in range(5):
+                        denied = await attacker.post(
+                            "/api/v1/auth/login",
+                            headers=AUTH_HEADERS,
+                            json={"username": TEST_USERNAME, "password": "incorrect-password"},
+                        )
+                        self.assertEqual(denied.status_code, 401)
+                    limited = await attacker.post(
+                        "/api/v1/auth/login",
+                        headers=AUTH_HEADERS,
+                        json={"username": TEST_USERNAME, "password": "incorrect-password"},
+                    )
+                    self.assertEqual(limited.status_code, 429)
+                    self.assertEqual(limited.json()["detail"]["code"], "RATE_LIMITED")
+
+    async def test_login_limiter_reserves_concurrent_attempts_atomically(self):
+        limiter = LoginRateLimiter(maximum=2, window_seconds=60.0, max_keys=8)
+        results = await asyncio.gather(*(limiter.claim("same-client") for _ in range(10)))
+        self.assertEqual(results.count(True), 2)
+        self.assertEqual(results.count(False), 8)
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
@@ -86,10 +262,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(ranged.json()["error"]["code"], "RANGE_NOT_SUPPORTED")
                         self.assertEqual(ranged.headers["Accept-Ranges"], "none")
                         self.assertEqual((await client.get("/api/v1/status")).status_code, 401)
-                        token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                        exchanged = await client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
-                        self.assertEqual(exchanged.status_code, 200)
-                        self.assertEqual(exchanged.json()["role"], "admin")
+                        exchanged = await setup_admin_async(client, settings)
+                        self.assertEqual(exchanged["role"], "admin")
                         self.assertEqual((await client.get("/api/v1/auth/session")).status_code, 200)
                         status = await client.get("/api/v1/status")
                         self.assertEqual(status.status_code, 200)
@@ -106,9 +280,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             async with app.router.lifespan_context(app):
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                    token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                    exchanged = await client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
-                    csrf = exchanged.json()["csrf_token"]
+                    exchanged = await setup_admin_async(client, settings)
+                    csrf = exchanged["csrf_token"]
                     headers = {"Origin": "http://testserver", "X-CSRF-Token": csrf}
                     frame = {
                         "stream_id": "stream-1",
@@ -173,9 +346,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             async with app.router.lifespan_context(app):
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                    token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                    exchanged = await client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
-                    csrf = exchanged.json()["csrf_token"]
+                    exchanged = await setup_admin_async(client, settings)
+                    csrf = exchanged["csrf_token"]
                     metadata = FrameMetadata(
                         stream_id="stream-1",
                         frame_id="frame-1",
@@ -234,9 +406,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 async with app.router.lifespan_context(app):
                     transport = httpx.ASGITransport(app=app)
                     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                        token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                        exchanged = await client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
-                        csrf = exchanged.json()["csrf_token"]
+                        exchanged = await setup_admin_async(client, settings)
+                        csrf = exchanged["csrf_token"]
                         session_cookie = client.cookies.get(SESSION_COOKIE)
                         self.assertIsNotNone(session_cookie)
                         owner_id = session_cookie.split(".", 1)[0]
@@ -294,6 +465,23 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class WebSocketApiTests(unittest.TestCase):
+    def test_anonymous_websocket_is_rejected_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = load_settings(Path(directory))
+            app = create_app(
+                settings,
+                adb_controller=MockAdbController(rotation=0),
+                screen_provider=MockScreenProvider(error_code="NO_STREAM"),
+            )
+            with TestClient(app, base_url="http://testserver") as client:
+                with self.assertRaises(WebSocketDisconnect) as context:
+                    with client.websocket_connect(
+                        "/api/v1/screen/ws",
+                        headers={"Origin": "http://testserver"},
+                    ):
+                        pass
+                self.assertEqual(context.exception.code, 4401)
+
     def test_authenticated_png_frame_requires_exact_ack_before_registration(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = load_settings(Path(directory))
@@ -318,11 +506,7 @@ class WebSocketApiTests(unittest.TestCase):
             )
 
             with TestClient(app, base_url="http://testserver") as client:
-                token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                self.assertEqual(
-                    client.post("/api/v1/auth/bootstrap/exchange", json={"token": token}).status_code,
-                    200,
-                )
+                setup_admin(client, settings)
                 session_cookie = client.cookies.get(SESSION_COOKIE)
                 self.assertIsNotNone(session_cookie)
                 owner_id = session_cookie.split(".", 1)[0]
@@ -372,11 +556,7 @@ class WebSocketApiTests(unittest.TestCase):
                 )
 
                 with TestClient(app, base_url="http://testserver") as client:
-                    token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                    self.assertEqual(
-                        client.post("/api/v1/auth/bootstrap/exchange", json={"token": token}).status_code,
-                        200,
-                    )
+                    setup_admin(client, settings)
                     session_cookie = client.cookies.get(SESSION_COOKIE)
                     self.assertIsNotNone(session_cookie)
                     owner_id = session_cookie.split(".", 1)[0]
@@ -432,9 +612,8 @@ class WebSocketApiTests(unittest.TestCase):
             )
 
             with TestClient(app, base_url="http://testserver") as client:
-                token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                exchanged = client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
-                csrf = exchanged.json()["csrf_token"]
+                exchanged = setup_admin(client, settings)
+                csrf = exchanged["csrf_token"]
                 headers = {"Origin": "http://testserver", "X-CSRF-Token": csrf}
                 with (
                     client.websocket_connect("/api/v1/screen/ws", headers={"Origin": "http://testserver"}) as first,
@@ -500,8 +679,7 @@ class WebSocketApiTests(unittest.TestCase):
             )
 
             with TestClient(app, base_url="http://testserver") as client:
-                token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
+                setup_admin(client, settings)
                 registry = app.state.frame_registry
                 original_confirm = registry.confirm
                 commit_started = threading.Event()
@@ -558,8 +736,7 @@ class WebSocketApiTests(unittest.TestCase):
             )
 
             with TestClient(app, base_url="http://testserver") as client:
-                token = settings.bootstrap_path.read_text(encoding="utf-8").strip()
-                client.post("/api/v1/auth/bootstrap/exchange", json={"token": token})
+                setup_admin(client, settings)
                 session_cookie = client.cookies.get(SESSION_COOKIE)
                 self.assertIsNotNone(session_cookie)
                 with client.websocket_connect(

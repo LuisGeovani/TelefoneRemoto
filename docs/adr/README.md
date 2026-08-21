@@ -9,3 +9,4 @@ ADR a substitui explicitamente, mantendo o histórico.
 - [ADR 0004 — Estabilização do runtime após validação no S10](0004-m21-hardware-runtime-stabilization.md)
 - [ADR 0005 — Lease efêmero para controle já validado](0005-m2-inflight-frame-control-lease.md)
 - [ADR 0006 — Apresentação atômica de frames PNG](0006-m2-atomic-frame-presentation.md)
+- [ADR 0007 — Autenticação persistente de uma única conta](0007-m22-persistent-single-admin-auth.md)
