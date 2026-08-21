@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { FramePresentationMachine } from "./framePresentation";
 import type { AdbStatus, FrameAcknowledged, FrameMetadata, ScreenFrame, StreamConnectionState } from "./types";
 
 const MAX_FRAME_BYTES = 24 * 1024 * 1024;
@@ -114,35 +115,27 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
   const [fps, setFps] = useState(1);
   const [frameMaxAgeSeconds, setFrameMaxAgeSeconds] = useState(5);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [generation, setGeneration] = useState(0);
-
   const socketRef = useRef<WebSocket | null>(null);
-  const candidateRef = useRef<ScreenFrame | null>(null);
-  const confirmedFrameRef = useRef<ScreenFrame | null>(null);
-  const confirmedUrlRef = useRef<string | null>(null);
+  const presentationRef = useRef(new FramePresentationMachine<ScreenFrame>());
   const ackSentRef = useRef<{ streamId: string; frameId: string } | null>(null);
   const urlsRef = useRef(new Set<string>());
+  const retiredUrlsRef = useRef(new Set<string>());
+  const preloadRef = useRef<{ image: HTMLImageElement; frame: ScreenFrame } | null>(null);
+  const reconnectRef = useRef<() => void>(() => undefined);
 
-  const clearFrameState = useCallback(() => {
-    for (const url of urlsRef.current) URL.revokeObjectURL(url);
-    urlsRef.current.clear();
-    candidateRef.current = null;
-    confirmedFrameRef.current = null;
-    confirmedUrlRef.current = null;
-    ackSentRef.current = null;
-    setFrame(null);
-    setFrameConfirmed(false);
-    setAckPending(false);
-    setConfirmedAt(null);
+  const applyPresentation = useCallback(() => {
+    const presentation = presentationRef.current.snapshot();
+    setFrame(presentation.displayed);
+    setFrameConfirmed(presentation.displayedConfirmed);
+    setAckPending(presentation.candidatePhase === "awaiting_ack");
+    setConfirmedAt(presentation.confirmedAt);
   }, []);
 
   useEffect(() => {
     if (!enabled) {
+      presentationRef.current.invalidate(false);
+      applyPresentation();
       setConnection("idle");
-      setFrame(null);
-      setFrameConfirmed(false);
-      setAckPending(false);
-      setConfirmedAt(null);
       setStreamId(null);
       setAdbStatus(null);
       setFps(1);
@@ -162,13 +155,32 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
       if (url && urlsRef.current.delete(url)) URL.revokeObjectURL(url);
     };
 
-    const clearFrames = () => {
+    const cancelPreload = () => {
+      const preload = preloadRef.current;
+      if (!preload) return;
+      preload.image.onload = null;
+      preload.image.onerror = null;
+      preloadRef.current = null;
+    };
+
+    const invalidatePresentation = (preserveDisplayed: boolean) => {
       pendingMetadata = null;
-      clearFrameState();
+      cancelPreload();
+      ackSentRef.current = null;
+      const previous = presentationRef.current.invalidate(preserveDisplayed);
+      if (previous.candidate) revoke(previous.candidate.objectUrl);
+      if (!preserveDisplayed && previous.displayed) revoke(previous.displayed.objectUrl);
+      applyPresentation();
+    };
+
+    const retainUntilDisplayed = (previous: ScreenFrame | null) => {
+      for (const retired of retiredUrlsRef.current) revoke(retired);
+      retiredUrlsRef.current.clear();
+      if (previous) retiredUrlsRef.current.add(previous.objectUrl);
     };
 
     const protocolFailure = (code: string, currentSocket: WebSocket) => {
-      clearFrames();
+      invalidatePresentation(true);
       setLastError(code);
       setConnection("error");
       if (currentSocket.readyState === WebSocket.OPEN) currentSocket.close(4000, "PROTOCOL_ERROR");
@@ -188,7 +200,7 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
     const open = () => {
       if (disposed) return;
       setConnection(attempt === 0 ? "connecting" : "reconnecting");
-      clearFrames();
+      invalidatePresentation(true);
       activeStreamId = null;
       setStreamId(null);
       setAdbStatus(null);
@@ -225,13 +237,13 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
             return;
           }
           if (isStreamError(message)) {
-            clearFrames();
+            invalidatePresentation(true);
             setAdbStatus(message.adb);
             setLastError(message.code);
             return;
           }
           if (isFrameAcknowledged(message)) {
-            const candidate = candidateRef.current;
+            const candidate = presentationRef.current.snapshot().candidate;
             const sent = ackSentRef.current;
             if (!candidate
               || !sent
@@ -243,21 +255,22 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
               protocolFailure("INVALID_FRAME_ACKNOWLEDGEMENT", currentSocket);
               return;
             }
-            const previousUrl = confirmedUrlRef.current;
-            confirmedFrameRef.current = candidate;
-            confirmedUrlRef.current = candidate.objectUrl;
+            const previous = presentationRef.current.acknowledged(candidate, Date.now());
+            if (previous === undefined) {
+              protocolFailure("INVALID_FRAME_ACKNOWLEDGEMENT", currentSocket);
+              return;
+            }
             ackSentRef.current = null;
-            setFrame(candidate);
-            setFrameConfirmed(true);
-            setAckPending(false);
-            setConfirmedAt(Date.now());
+            cancelPreload();
+            applyPresentation();
             setLastError(null);
-            if (previousUrl && previousUrl !== candidate.objectUrl) revoke(previousUrl);
+            retainUntilDisplayed(previous);
             return;
           }
           if (isFrameMetadata(message)
             && pendingMetadata === null
             && ackSentRef.current === null
+            && presentationRef.current.snapshot().candidate === null
             && message.stream_id === activeStreamId) {
             pendingMetadata = message;
             return;
@@ -287,24 +300,68 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
         };
         pendingMetadata = null;
         urlsRef.current.add(next.objectUrl);
-        const oldCandidate = candidateRef.current;
-        if (oldCandidate && oldCandidate.objectUrl !== confirmedUrlRef.current) revoke(oldCandidate.objectUrl);
-        candidateRef.current = next;
-        setFrame(next);
-        setFrameConfirmed(false);
-        setAckPending(false);
+        if (!presentationRef.current.begin(next)) {
+          revoke(next.objectUrl);
+          protocolFailure("FRAME_CANDIDATE_ALREADY_PENDING", currentSocket);
+          return;
+        }
+        applyPresentation();
+
+        const image = new Image();
+        image.decoding = "async";
+        preloadRef.current = { image, frame: next };
+        const decoded = () => {
+          if (disposed
+            || currentSocket !== socketRef.current
+            || preloadRef.current?.frame !== next
+            || !presentationRef.current.decoded(next)) {
+            return;
+          }
+          ackSentRef.current = {
+            streamId: next.metadata.stream_id,
+            frameId: next.metadata.frame_id,
+          };
+          try {
+            currentSocket.send(JSON.stringify({
+              type: "frame_ack",
+              stream_id: next.metadata.stream_id,
+              frame_id: next.metadata.frame_id,
+            }));
+          } catch {
+            ackSentRef.current = null;
+            presentationRef.current.candidateFailed(next);
+            revoke(next.objectUrl);
+            applyPresentation();
+            setLastError("FRAME_ACK_SEND_FAILED");
+            currentSocket.close(4001, "FRAME_ACK_SEND_FAILED");
+            return;
+          }
+          applyPresentation();
+        };
+        const decodeFailed = () => {
+          if (preloadRef.current?.frame !== next) return;
+          preloadRef.current = null;
+          presentationRef.current.candidateFailed(next);
+          revoke(next.objectUrl);
+          applyPresentation();
+          setLastError("FRAME_DECODE_FAILED");
+          currentSocket.close(4001, "FRAME_DECODE_FAILED");
+        };
+        image.onerror = decodeFailed;
+        image.src = next.objectUrl;
+        void image.decode().then(decoded, decodeFailed);
       };
 
       currentSocket.onerror = () => {
         if (!disposed) {
-          clearFrames();
+          invalidatePresentation(true);
           setLastError("STREAM_CONNECTION_ERROR");
         }
       };
 
       currentSocket.onclose = (event) => {
         if (currentSocket === socketRef.current) socketRef.current = null;
-        clearFrames();
+        invalidatePresentation(true);
         activeStreamId = null;
         setStreamId(null);
         setAdbStatus(null);
@@ -322,79 +379,78 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
           setLastError(event.reason || "STREAM_REJECTED");
           return;
         }
+        if (event.code === 4002) {
+          attempt = 0;
+          open();
+          return;
+        }
         setConnection("offline");
         scheduleReconnect();
       };
     };
 
-    setFrame(null);
-    setFrameConfirmed(false);
-    setAckPending(false);
-    setConfirmedAt(null);
     setStreamId(null);
+    reconnectRef.current = () => {
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      const currentSocket = socketRef.current;
+      if (currentSocket && currentSocket.readyState !== WebSocket.CLOSED) {
+        currentSocket.close(4002, "CLIENT_RECONNECT");
+      } else {
+        attempt = 0;
+        open();
+      }
+    };
     open();
 
     return () => {
       disposed = true;
+      reconnectRef.current = () => undefined;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
       if (socket) {
         socket.onclose = null;
         socket.close(1000, "PAGE_CLOSED");
       }
       if (socketRef.current === socket) socketRef.current = null;
+      cancelPreload();
       for (const url of urlsRef.current) URL.revokeObjectURL(url);
       urlsRef.current.clear();
-      candidateRef.current = null;
-      confirmedFrameRef.current = null;
-      confirmedUrlRef.current = null;
+      retiredUrlsRef.current.clear();
       ackSentRef.current = null;
+      presentationRef.current.invalidate(false);
     };
-  }, [clearFrameState, enabled, generation, onUnauthorized]);
-
-  const confirmFrame = useCallback((expected: ScreenFrame) => {
-    const candidate = candidateRef.current;
-    const confirmed = confirmedFrameRef.current;
-    const socket = socketRef.current;
-    if (!candidate
-      || candidate.metadata.frame_id !== expected.metadata.frame_id
-      || candidate.metadata.stream_id !== expected.metadata.stream_id
-      || (ackSentRef.current?.streamId === expected.metadata.stream_id
-        && ackSentRef.current.frameId === expected.metadata.frame_id)
-      || (confirmed?.metadata.stream_id === expected.metadata.stream_id
-        && confirmed.metadata.frame_id === expected.metadata.frame_id)
-      || socket?.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    try {
-      socket.send(JSON.stringify({
-        type: "frame_ack",
-        stream_id: candidate.metadata.stream_id,
-        frame_id: candidate.metadata.frame_id,
-      }));
-    } catch {
-      clearFrameState();
-      setLastError("FRAME_ACK_SEND_FAILED");
-      socket.close(4001, "FRAME_ACK_SEND_FAILED");
-      return;
-    }
-    ackSentRef.current = {
-      streamId: candidate.metadata.stream_id,
-      frameId: candidate.metadata.frame_id,
-    };
-    setAckPending(true);
-    setFrameConfirmed(false);
-  }, [clearFrameState]);
-
-  const rejectFrame = useCallback((expected: ScreenFrame) => {
-    const candidate = candidateRef.current;
-    if (!candidate || candidate.metadata.frame_id !== expected.metadata.frame_id) return;
-    clearFrameState();
-    setLastError("FRAME_DECODE_FAILED");
-    socketRef.current?.close(4001, "FRAME_DECODE_FAILED");
-  }, [clearFrameState]);
+  }, [applyPresentation, enabled, onUnauthorized]);
 
   const reconnect = useCallback(() => {
-    setGeneration((value) => value + 1);
+    reconnectRef.current();
+  }, []);
+
+  const frameRendered = useCallback((rendered: ScreenFrame) => {
+    const displayed = presentationRef.current.snapshot().displayed;
+    if (displayed?.metadata.stream_id !== rendered.metadata.stream_id
+      || displayed.metadata.frame_id !== rendered.metadata.frame_id) {
+      return;
+    }
+    for (const retired of retiredUrlsRef.current) {
+      if (retired !== displayed.objectUrl && urlsRef.current.delete(retired)) {
+        URL.revokeObjectURL(retired);
+      }
+    }
+    retiredUrlsRef.current.clear();
+  }, []);
+
+  const frameDisplayFailed = useCallback((failed: ScreenFrame) => {
+    const displayed = presentationRef.current.snapshot().displayed;
+    if (displayed?.metadata.stream_id !== failed.metadata.stream_id
+      || displayed.metadata.frame_id !== failed.metadata.frame_id) {
+      return;
+    }
+    setFrameConfirmed(false);
+    setConfirmedAt(null);
+    setLastError("FRAME_DISPLAY_FAILED");
+    socketRef.current?.close(4001, "FRAME_DISPLAY_FAILED");
   }, []);
 
   return {
@@ -408,8 +464,8 @@ export function useScreenStream(enabled: boolean, onUnauthorized: () => void) {
     fps,
     frameMaxAgeSeconds,
     lastError,
-    confirmFrame,
-    rejectFrame,
+    frameRendered,
+    frameDisplayFailed,
     reconnect,
   };
 }

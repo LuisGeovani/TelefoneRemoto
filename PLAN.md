@@ -125,10 +125,10 @@ Sem reboot. O teste de Termux:Boot não pertence ao M1.
 
 ## Milestone 2 — ADB, tela PNG e controle Android (etapa autorizada)
 
-**Estado:** implementado e testado no host. Self-ADB, identidade, PNG real
-720 × 1520 e input ADB direto foram comprovados uma vez no SM-G975F. A campanha
-encontrou dois defeitos de integração (ação invalidada pelo ACK seguinte e crop
-portrait); as correções passaram no host e aguardam reteste no aparelho.
+**Estado:** núcleo funcional validado uma vez no SM-G975F. Self-ADB, identidade,
+PNG 720 × 1520, portrait inteiro e controles exercitados pelo painel funcionaram
+após `52c7510`. A correção final de flicker entre PNGs passou no host e aguarda
+reteste no aparelho; capacidades específicas não reportadas continuam pendentes.
 
 O M2 combina o gateway ADB, o ScreenProvider PNG e o AndroidController porque
 controle por coordenadas não pode existir sem referência visual atual. O
@@ -471,10 +471,10 @@ Este milestone só ocorre se ADB/scrcpy não satisfizerem requisitos e após ADR
 
 ## Instrução exata ao próximo agente
 
-Leia os documentos raiz, ADRs 0003/0004/0005 e o runbook. **Não implemente outro
-milestone.** M2.1 foi validada no SM-G975F. O próximo trabalho operacional é
-implantar e retestar somente as correções de lease de frame e viewport portrait
-encontradas na campanha M2, preservando rota visual e SSH. O próximo milestone
-novo planejado é M3 (observabilidade local avançada), ainda não autorizado. Não adicione H.264,
+Leia os documentos raiz, ADRs 0003–0006 e o runbook. **Não implemente outro
+milestone.** M2.1 e o núcleo funcional M2 foram validados no SM-G975F. O próximo
+trabalho operacional é implantar e retestar somente a correção de flicker,
+preservando rota visual e SSH. O próximo milestone novo planejado é M3
+(observabilidade local avançada), ainda não autorizado. Não adicione H.264,
 scrcpy, PowerShare, pairing/connect automático, shell/intent/package arbitrário
 ou feature futura.

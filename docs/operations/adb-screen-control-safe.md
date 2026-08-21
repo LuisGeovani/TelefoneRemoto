@@ -17,9 +17,10 @@ apps/server/.venv/bin/python -m unittest discover -s apps/server/tests -v
 
 A campanha M2 já comprovou uma vez self-ADB `device`, identidade, PNG real
 720 × 1520 portrait/0° e stream de aproximadamente 1 FPS. Ela também encontrou
-recusa contínua `STALE_FRAME` nos controles e crop do portrait. As correções
-desta branch ainda exigem o reteste dos Checkpoints 5–7; não as trate como
-validadas no aparelho antes desse reteste.
+recusa contínua `STALE_FRAME` nos controles e crop do portrait. Após `52c7510`,
+o proprietário confirmou o portrait inteiro e controles funcionais no painel.
+A correção posterior de flicker entre frames ainda exige reteste no Checkpoint
+5; não a trate como validada no aparelho antes desse reteste.
 
 Com uma sessão SSH de recuperação mantida aberta e a Tela Remota conectada em
 outro equipamento, valide somente o lifecycle do projeto:
@@ -339,6 +340,10 @@ No **Checkpoint 5**, sem enviar input:
    stream que exibiram a imagem, não a outro navegador.
 4. Registre FPS mostrado, resolução, aspect ratio, orientação e o resultado de
    desconectar/reconectar o navegador.
+5. Confirme que o frame anterior permanece visível durante decode/ACK do
+   seguinte, sem texto, fundo vazio ou flicker sobre a superfície; em queda do
+   stream, o último frame pode permanecer visível, mas deve indicar offline e
+   bloquear controle até um novo frame confirmado.
 
 No **Checkpoint 6**, confira no scrcpy o efeito de uma ação por vez, aguardando
 um frame novo entre elas:

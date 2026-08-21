@@ -1,7 +1,8 @@
 # Arquitetura do S10 Control Server
 
 - **Status:** M2 estabilizado após deploy real; runtime pelo ADR 0002, slice
-  ADB/PNG/controle pelo ADR 0003 e compatibilidade M2.1 pelo ADR 0004
+  ADB/PNG/controle pelo ADR 0003, compatibilidade M2.1 pelo ADR 0004, lease pela
+  ADR 0005 e apresentação atômica pela ADR 0006
 - **Estilo:** monólito modular, hexagonal/ports-and-adapters, local-first
 
 ## 1. Decisão principal
@@ -321,6 +322,14 @@ Sem clientes, o produtor para e o registro correspondente é limpo. Captura,
 rotação anterior/posterior, target, `transport_id` e geração são observados sob
 o mesmo scheduler limitado, que prioriza controles sem permitir starvation;
 mudança durante o PNG descarta o frame.
+
+No navegador, o frame confirmado permanece como única superfície visível e de
+controle enquanto o próximo Blob PNG é pré-decodificado por uma `Image` nativa
+fora do DOM. O cliente envia o ACK somente após esse decode e promove o
+candidato ao receber `frame_acknowledged`, fazendo uma troca visual direta. Em
+erro/reconnect, o último frame pode permanecer como referência visual marcada
+offline/stale, mas perde imediatamente a autorização de input. Blob URLs
+anteriores são revogadas somente depois que o novo `<img>` dispara `load`.
 
 Esta sequência de screenshots não é vídeo. M2 não contém H.264, scrcpy-server,
 `screenrecord`, ffmpeg, áudio, WebCodecs, MediaProjection ou companion. Esses

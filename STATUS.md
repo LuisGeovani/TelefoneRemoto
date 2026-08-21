@@ -3,8 +3,8 @@
 - **Atualizado em:** 2026-08-20 (America/Rio_Branco)
 - **Branch de trabalho:** `codex/m2-adb-hardware-validation`
 - **Versão:** `0.2.1`
-- **Milestone:** M2.1 concluída; validação M2 em hardware em andamento com duas correções aguardando reteste
-- **Push:** autorizado explicitamente para as duas correções M2 desta branch
+- **Milestone:** M2 validado no hardware; correção final de flicker aguardando reteste
+- **Push:** autorizado explicitamente para o fechamento/UX final do M2
 
 ## Resultado da estabilização M2.1
 
@@ -28,7 +28,7 @@ obtida no Samsung Galaxy S10+ SM-G975F real:
 Não foram adicionados PowerShare, H.264/scrcpy, terminal, arquivos, package
 manager, Cloudflare, Tailscale ou qualquer outro milestone.
 
-## Evidência parcial do M2 no hardware
+## Evidência do M2 no hardware
 
 A campanha M2 posterior à estabilização comprovou, em uma única sessão segura
 no SM-G975F real:
@@ -42,13 +42,20 @@ no SM-G975F real:
 - `KEYCODE_HOME` e `input swipe` tipados executados diretamente no Termux
   funcionaram, isolando o transporte/input Android dos defeitos da aplicação.
 
-Dois defeitos do S10 Control foram então observados: controles pela UI eram
-recusados como `STALE_FRAME` quando o ACK do frame seguinte avançava o registry
+Dois defeitos do S10 Control foram inicialmente observados: controles pela UI
+eram recusados como `STALE_FRAME` quando o ACK do frame seguinte avançava o registry
 enquanto a ação aguardava o gate ADB; e o PNG portrait aparecia ampliado/
-recortado em viewport largo. A correção no host mantém um lease interno somente
+recortado em viewport largo. O commit `52c7510` mantém um lease interno somente
 para a ação já validada e usa uma imagem absoluta com `contain` centralizado,
-letterbox e mapeamento pela área efetivamente renderizada. **Essas correções
-ainda não foram validadas novamente no aparelho.**
+letterbox e mapeamento pela área efetivamente renderizada. Após o deploy, o
+proprietário confirmou no aparelho que o frame portrait inteiro 720 × 1520 foi
+preservado e que os controles testados passaram a funcionar pelo painel.
+
+O reteste revelou um defeito de UX restante: a troca normal de cada PNG exibia
+o estado `decodificando` sobre a superfície, causando flicker perceptível a
+aproximadamente 1 FPS. A correção atual pré-decodifica o candidato fora do DOM,
+preserva o último frame válido durante decode/ACK e faz o swap somente após
+`frame_acknowledged`. Ela passou no host e ainda aguarda reteste no S10.
 
 ## Evidência real no SM-G975F
 
@@ -72,7 +79,7 @@ Validados no aparelho em um deploy real:
 | Rede | probe de Internet online e probe SSH online |
 | Termux:API | CLI e APK compatíveis instalados; `termux-battery-status` respondeu |
 | Bateria | dados reais apareceram no Dashboard |
-| Tela Remota | página mobile-first carregou; depois exibiu PNG ADB real 720 × 1520 continuamente |
+| Tela Remota | PNG ADB real 720 × 1520 contínuo; portrait inteiro/contain confirmado após `52c7510` |
 | WebSocket da UI | conexão funcionou após restart e na campanha M2 a aproximadamente 1 FPS |
 
 Essa é uma validação real, mas única. As capacidades acima permanecem na classe
@@ -98,10 +105,14 @@ registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
    coleta funcionou. Ausência do APK continua sendo degradação esperada.
 5. **Controle frame-bound:** o frame seguinte confirmado invalidava uma ação
    fresca que já aguardava o gate ADB, produzindo `STALE_FRAME` continuamente em
-   1 FPS. A correção tem regressão no host e aguarda reteste real.
+   1 FPS. A correção de `52c7510` funcionou no reteste real: os controles
+   exercitados pelo proprietário passaram a funcionar pelo painel.
 6. **Viewport portrait:** o PNG 720 × 1520 participava do dimensionamento
-   intrínseco do grid e aparecia recortado em viewport largo. O layout agora
-   força `contain` centralizado e testa letterbox/mapeamento; aguarda reteste real.
+   intrínseco do grid e aparecia recortado em viewport largo. O layout com
+   `contain`, centralização e letterbox mostrou o frame inteiro no reteste real.
+7. **Flicker entre PNGs:** o candidato substituía o `src` visível antes de
+   decode/ACK e um overlay cobria o frame a cada atualização. A máquina de
+   apresentação atômica passou nas regressões do host e aguarda reteste real.
 
 ## Classificação e estado verificável
 
@@ -112,10 +123,10 @@ registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
 | Listener e acesso LAN `0.0.0.0:8080` | `probable` | acesso real por `192.168.1.13` e telemetria correta após restart; teste sem WAN pendente |
 | SSH observacional | `probable` | probe e serviço real online; permanece protegido/read-only |
 | Termux:API e bateria | `probable` | APK+CLI compatíveis responderam no aparelho |
-| Frontend Tela Remota e WebSocket da UI | `probable` | página, WS e PNG real contínuo observados; correção de viewport aguarda reteste |
+| Frontend Tela Remota e WebSocket da UI | `probable` | WS/PNG e viewport portrait inteiro validados uma vez; correção de flicker aguarda reteste |
 | ADB no próprio Termux | `experimental` | uma conexão manual real chegou a `device` e passou identidade; repetição/reconnect pendentes |
 | Screenshot PNG por ADB | `experimental` | PNG real 720 × 1520, portrait/0°, ~1 FPS observado uma vez |
-| Controle Android vinculado ao frame | `experimental` | bug `STALE_FRAME` reproduzido no aparelho; correção passou no host e aguarda deploy/reteste |
+| Controle Android vinculado ao frame | `experimental` | controles testados pelo proprietário funcionaram após `52c7510`; matriz completa/repetição pendentes |
 | Wake/sleep e `adb input text` | `experimental` | não executados no aparelho |
 | H.264/scrcpy e PowerShare | `experimental` | não implementados |
 | Operações que exigem root/privilégio de sistema | `privileged_required` | permanecem fora do projeto |
@@ -126,7 +137,7 @@ registradas. LAN sem Internet e soak ainda não foram executados no aparelho.
 - rotação diferente de 0° e mudança real de orientação durante frame/ação;
 - tap, swipe, long press, HOME, BACK, RECENTS, ENTER e volume;
 - wake/sleep e texto ASCII;
-- correções de lease/viewport, stale real, pós-condições, fullscreen móvel e gestos reais;
+- correção de flicker, stale real, pós-condições, fullscreen móvel e matriz individual de gestos/teclas;
 - LAN com WAN indisponível, soak e consumo térmico/energético.
 
 ADB permaneceu `enabled: false` durante a validação M2.1. Na campanha M2,
@@ -143,9 +154,8 @@ revogação, alteração de Wi-Fi ou ação sobre SSH.
   `Range` recusado, timeout de shutdown, ADB degradado e todos os contratos M2;
 - a regressão SIGTERM fica habilitada automaticamente em Linux/Termux e mantém
   um WebSocket autenticado aberto durante o sinal;
-- frontend 0.2.1: `npm test` passou typecheck e 5 regressões de layout/geometria
-  (contain, portrait, landscape, letterbox e coordenadas); `npm run build` gerou 21
-  módulos e assets locais;
+- frontend 0.2.1: `npm test` passou typecheck e 12 regressões de apresentação,
+  layout e geometria; `npm run build` gerou 22 módulos e assets locais;
 - `compileall` de source, testes e smoke passou;
 - `pip check` reportou `No broken requirements found`;
 - `smoke-python-runtime.py` importou o projeto em subprocesso e confirmou os
@@ -193,8 +203,8 @@ upstream corrigida ser comprovada no Termux ARM64.
 4. A descoberta LAN funcionou no teste real depois de uma request por
    `192.168.1.13`; antes da primeira request, os fallbacks ainda dependem das
    rotas que o kernel expõe ao Termux.
-5. Self-ADB, PNG e input Android foram comprovados uma vez, mas a integração de
-   controle pela UI e o novo layout ainda aguardam reteste no hardware.
+5. Self-ADB, PNG, viewport e controles exercitados foram comprovados uma vez;
+   flicker, matriz completa de ações, stale/orientação e repetição permanecem.
 6. HTTP LAN não oferece confidencialidade e `:8080` não deve ser publicado por
    WAN ou túnel.
 7. Android/One UI ainda pode matar Termux e `sshd`; runit não garante uptime do
@@ -202,8 +212,8 @@ upstream corrigida ser comprovada no Termux ARM64.
 
 ## Próximo passo seguro
 
-M2.1 está aceita e encerrada. O próximo passo é implantar somente estas duas
-correções pelo fluxo seguro existente e repetir no S10: frame inteiro, HOME,
-tap, swipe, long press, BACK/RECENTS e recusa de stale real. O próximo milestone
+M2.1 está aceita e o núcleo funcional do M2 passou no hardware. O próximo passo
+é implantar somente a correção de apresentação e confirmar ausência de flicker,
+controle contínuo e preservação do portrait/letterbox. O próximo milestone
 novo numerado no `PLAN.md` é M3 (observabilidade local avançada), ainda não
 autorizado. Não iniciar M3, PowerShare, H.264 ou outro milestone.

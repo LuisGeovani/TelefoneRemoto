@@ -291,12 +291,12 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
   const controlReason = useMemo(() => {
     if (!hasControlRole) return "Seu papel permite somente visualizar.";
     if (adb.state !== "available") return `ADB ${adbLabel(adb)}${adb.reason ? ` · ${adb.reason}` : ""}.`;
-    if (!frame) return "Aguardando o primeiro frame.";
+    if (stream.connection !== "online") return `Stream ${connectionLabel(stream.connection)}; último frame sem autorização de controle.`;
+    if (!frame) return "Aguardando primeira captura…";
     if (!reference) return "Rotação não confirmada; controle bloqueado.";
-    if (stream.ackPending) return "Frame exibido; aguardando confirmação do servidor.";
-    if (!stream.frameConfirmed) return "Aguardando o frame ser exibido.";
+    if (!stream.frameConfirmed) return "Último frame preservado apenas como referência visual.";
     if (!frameFresh) return "Frame antigo; aguarde uma nova captura.";
-    if (stream.connection !== "online") return "Stream desconectado.";
+    if (stream.ackPending) return "Último frame válido ativo; próxima captura em confirmação.";
     return "Toque, arraste ou mantenha pressionado sobre a imagem.";
   }, [adb, frame, frameFresh, hasControlRole, reference, stream.ackPending, stream.connection, stream.frameConfirmed]);
 
@@ -336,20 +336,17 @@ export function RemoteScreenPage({ role, csrfToken, dashboardAdb, onUnauthorized
               src={frame.objectUrl}
               alt="Captura atual da tela lógica do Android"
               draggable={false}
-              onLoad={() => stream.confirmFrame(frame)}
-              onError={() => stream.rejectFrame(frame)}
+              onLoad={() => stream.frameRendered(frame)}
+              onError={() => stream.frameDisplayFailed(frame)}
               onPointerDown={pointerDown}
               onPointerUp={pointerUp}
               onPointerCancel={cancelGesture}
               onContextMenu={(event) => event.preventDefault()}
             />
             : <div className="screen-placeholder">
-              <strong>Aguardando captura</strong>
+              <strong>Aguardando primeira captura…</strong>
               <span>O painel continua disponível mesmo sem ADB.</span>
             </div>}
-          {!stream.frameConfirmed && frame && <div className="frame-loading">
-            {stream.ackPending ? "Confirmando frame…" : "Decodificando frame…"}
-          </div>}
           <div className="fullscreen-overlay">
             <span>ADB {adbLabel(adb)}</span>
             <button type="button" onClick={() => void toggleFullscreen()}>{fullscreen ? "Sair" : "Tela cheia"}</button>

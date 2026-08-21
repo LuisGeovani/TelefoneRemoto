@@ -39,3 +39,11 @@ já deixou de ser o mais recente.
 
 Esta decisão complementa a ADR 0003 somente para a janela de uma ação já
 validada; não autoriza frames históricos nem altera a allowlist ADB.
+
+## Addendum de validação no hardware — 2026-08-20
+
+Após instalar `52c7510` no SM-G975F, o proprietário confirmou que os controles
+exercitados passaram a funcionar pelo painel e que o frame portrait inteiro foi
+preservado. A lista individual de ações, stale real, mudança de orientação e
+repetição da campanha não foi reportada; a capacidade continua `experimental`,
+não `guaranteed`.

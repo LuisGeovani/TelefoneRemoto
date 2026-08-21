@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "tsc -b --noEmit && node --experimental-strip-types --test src/features/screen/geometry.test.mjs"
+    "test": "tsc -b --noEmit && node --experimental-strip-types --test src/features/screen/*.test.mjs"
   },
   "dependencies": {
     "react": "19.2.8",

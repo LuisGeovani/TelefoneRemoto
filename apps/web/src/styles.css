@@ -382,17 +382,6 @@ input {
   color: #dbeafe;
 }
 
-.frame-loading {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: #02040966;
-  color: #dbeafe;
-  font-size: 0.82rem;
-  pointer-events: none;
-}
-
 .fullscreen-overlay {
   display: none;
 }
